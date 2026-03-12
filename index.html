@@ -341,17 +341,20 @@ function render() {
                     hands[mySide].push({ type: capturedType, side: mySide, p: false });
                 }
 
-                // --- 修正版：成り判定ロジック ---
-                const isEntry = (mySide === S ? r <= 2 : r >= 6);
-                const isExit = (mySide === S ? selected.r <= 2 : selected.r >= 6);
+                // 「私」が誰かではなく、「動かした駒」が先手か後手かで敵陣を決める
+const isEntry = (p.side === S ? r <= 2 : r >= 6);
+const isExit = (p.side === S ? selected.r <= 2 : selected.r >= 6);
+
                 
                 // 内部データが「と」等になっていても「歩」として判定するために DEMO_MAP を使用
                 const baseType = DEMO_MAP[p.type] || p.type; 
                 const canPromote = PROM_MAP[baseType] && (isEntry || isExit);
                 
-                const forcePromote = (baseType === '歩' || baseType === '香') ? 
-                                    (mySide === S ? r === 0 : r === 8) : 
-                                    (baseType === '桂') ? (mySide === S ? r <= 1 : r >= 7) : false;
+                // ここも mySide ではなく p.side に書き換え
+const forcePromote = (baseType === '歩' || baseType === '香') ? 
+                    (p.side === S ? r === 0 : r === 8) : 
+                    (baseType === '桂') ? (p.side === S ? r <= 1 : r >= 7) : false;
+
 
                 if (canPromote && !p.p) {
                     if (forcePromote || confirm("成りますか？")) {
