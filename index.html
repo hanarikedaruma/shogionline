@@ -116,29 +116,55 @@ const firebaseConfig = {
     let selected = null, possibleMoves = [];
 
     function render() {
-        const bEl = document.getElementById('board'); bEl.innerHTML = '';
-        document.getElementById('turn-display').innerText = (turn === S ? "先手" : "後手") + "の番です" + (turn === mySide ? " (あなた)" : "");
-        
-        for(let r=0; r<9; r++) {
-            for(let c=0; c<9; c++) {
-                const cell = document.createElement('div');
-                cell.className = 'cell';
-                const p = board[r][c];
-                if (p) {
+    const bEl = document.getElementById('board');
+    if (!bEl) return;
+    bEl.innerHTML = '';
+
+    // 1. 盤面データ自体が存在するかチェック
+    if (!board || !Array.isArray(board)) {
+        console.error("Board data is missing or not an array");
+        return;
+    }
+
+    for (let r = 0; r < 9; r++) {
+        // 2. 行（board[r]）が存在するかチェック
+        if (!board[r] || !Array.isArray(board[r])) {
+            // 行がなければ空のセルだけ作ってスキップ（エラーで止めない）
+            for (let c = 0; c < 9; c++) {
+                const emptyCell = document.createElement('div');
+                emptyCell.className = 'cell';
+                bEl.appendChild(emptyCell);
+            }
+            continue;
+        }
+
+        for (let c = 0; c < 9; c++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            
+            const p = board[r][c];
+
+            // 3. 駒が存在し、かつ必要なプロパティを持っているかチェック
+            if (p && typeof p === 'object' && p.type) {
+                try {
                     const div = document.createElement('div');
                     div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
                     div.innerText = p.p ? getPName(p.type) : p.type;
                     cell.appendChild(div);
+                } catch (e) {
+                    console.error("Error rendering piece at", r, c, e);
                 }
-                if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
-                cell.onclick = () => handleClick(r, c);
-                bEl.appendChild(cell);
             }
+
+            // 選択状態や移動可能範囲の描画
+            if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
+            
+            cell.onclick = () => handleClick(r, c);
+            bEl.appendChild(cell);
         }
-        // 持ち駒描画 (簡略化)
-        document.getElementById('hand-sente').innerText = "先手持ち駒: " + hands[S].map(x=>x.type).join("");
-        document.getElementById('hand-gote').innerText = "後手持ち駒: " + hands[G].map(x=>x.type).join("");
     }
+}
+
 
     function handleClick(r, c) {
         if (turn !== mySide) return; // 自分のターンでなければ何もしない
