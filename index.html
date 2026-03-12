@@ -117,33 +117,36 @@
     let selected = null;
 
     function render() {
-        const bEl = document.getElementById('board');
-        if (!bEl || !board) return;
-        bEl.innerHTML = '';
-        
-        const sideTxt = (mySide === S ? "先手" : "後手");
-        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${sideTxt}：あなた)`;
+    const bEl = document.getElementById('board');
+    if (!bEl) return;
+    bEl.innerHTML = '';
 
-        for (let r = 0; r < 9; r++) {
-            for (let c = 0; c < 9; c++) {
-                const cell = document.createElement('div');
-                cell.className = 'cell';
-                const p = (board[r] && board[r][c]) ? board[r][c] : null;
-                if (p && p.type) {
-                    const div = document.createElement('div');
-                    div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
-                    div.innerText = p.p ? getPName(p.type) : p.type;
-                    cell.appendChild(div);
-                }
-                if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
-                cell.onclick = () => handleClick(r, c);
-                bEl.appendChild(cell);
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            
+            // データの存在チェックを「駒の描画」だけに限定する
+            const p = (board && board[r] && board[r][c]) ? board[r][c] : null;
+
+            if (p && typeof p === 'object' && p.type) {
+                const div = document.createElement('div');
+                div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
+                div.innerText = p.p ? getPName(p.type) : p.type;
+                cell.appendChild(div);
             }
+
+            // 【重要】データが有ろうが無かろうが、クリックイベントは必ず設定する
+            if (selected && selected.r === r && selected.c === c) {
+                cell.classList.add('selected');
+            }
+            
+            cell.onclick = () => handleClick(r, c); 
+            bEl.appendChild(cell);
         }
-        // 持ち駒の簡易表示
-        document.getElementById('hand-sente').innerText = "先手駒: " + (hands[S] ? hands[S].map(x=>x.type).join(" ") : "");
-        document.getElementById('hand-gote').innerText = "後手駒: " + (hands[G] ? hands[G].map(x=>x.type).join(" ") : "");
     }
+}
+
 
         function handleClick(r, c) {
         // デバッグログ：タップした場所をコンソールに表示
