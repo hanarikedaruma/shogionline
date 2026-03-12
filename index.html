@@ -343,6 +343,12 @@ function render() {
 
                 // 「私」が誰かではなく、「動かした駒」が先手か後手かで敵陣を決める
 const isEntry = (p.side === S ? r <= 2 : r >= 6);
+
+alert(p.side);
+alert(r);
+alert(isEntry);
+alert(p.p);
+
 const isExit = (p.side === S ? selected.r <= 2 : selected.r >= 6);
 
                 
