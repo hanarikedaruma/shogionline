@@ -104,11 +104,19 @@
     }
 
     // data.status が 'playing' になっていれば画面を表示
-    if (data.status === 'playing') {
+        if (data.status === 'playing') {
         document.getElementById('overlay').style.display = 'none';
-        // ...以下、描画処理...
+        
+        // ★ここに以下の「ボード情報取得」を追加する必要があります
+        let rawBoard = data.board || [];
+        board = Array(9).fill(null).map((_, r) => {
+            let row = rawBoard[r] || [];
+            return Array(9).fill(null).map((_, c) => row[c] || null);
+        });
 
-            hands = data.hands || {S:[], G:[]};
+        hands = data.hands || {S:[], G:[]};
+        // ...（以下、既存の処理）
+
             if (!hands.S) hands.S = []; if (!hands.G) hands.G = [];
             turn = data.turn;
             render();
