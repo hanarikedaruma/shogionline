@@ -328,11 +328,13 @@ function render() {
 
     function handleClick(r, c) {
     if (turn !== mySide) return;
+alert(p);
     if (selected) {
+alert(selected);
+alert(possibleMoves.some(m => m[0] === r && m[1] === c));
         if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
 
             if (selected.fromHand) {
-alert('hand');
                 board[r][c] = { type: selected.type, side: mySide, p: false };
                 hands[mySide].splice(selected.idx, 1);
             } else {
