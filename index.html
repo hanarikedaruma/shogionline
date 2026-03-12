@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>オンライン将棋 - 本格ルール版</title>
+    <title>オンライン将棋 - 役職固定・本格ルール版</title>
     <style>
         :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
@@ -23,18 +23,18 @@
 <body>
 
 <div id="overlay">
-    <h2 id="status-msg">接続中...</h2>
+    <h2 id="status-msg">対局室を準備中...</h2>
     <p id="room-url" style="word-break: break-all; font-size: 0.8rem;"></p>
 </div>
 
 <div id="hand-gote" class="hand"></div>
-<div id="turn-display" class="turn-box">対局準備中</div>
+<div id="turn-display" class="turn-box">接続中...</div>
 <div id="board"></div>
 <div id="hand-sente" class="hand"></div>
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set, onValue, update, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyASo0xVEWj_XeErm7tO1ZjbjWyfJADgydQ",
@@ -50,9 +50,9 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
     const urlParams = new URLSearchParams(window.location.search);
-    const roomId = urlParams.get('room') || "R-" + Math.floor(Math.random() * 1000);
+    const roomId = urlParams.get('room') || "R-" + Math.floor(Math.random() * 10000);
     if (!urlParams.get('room')) window.history.replaceState(null, null, "?room=" + roomId);
-    document.getElementById('room-url').innerText = "招待URL: " + window.location.href;
+    document.getElementById('room-url').innerText = "招待用URL: " + window.location.href;
 
     const roomRef = ref(db, 'rooms/' + roomId);
     const S='S', G='G';
@@ -86,33 +86,60 @@
         return b;
     }
 
-    onValue(roomRef, (snapshot) => {
-        const data = snapshot.val();
-        if (!data) {
-            mySide = S; sessionStorage.setItem('shogi-side', S);
-            set(roomRef, { players: 1, status: 'playing', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S });
+    // --- 役職の決定ロジック（トランザクション使用） ---
+    async function joinRoom() {
+        const savedSide = sessionStorage.getItem('shogi-side-' + roomId);
+        if (savedSide) {
+            mySide = savedSide;
             return;
         }
-        const savedSide = sessionStorage.getItem('shogi-side');
-        if (savedSide) { mySide = savedSide; }
-        else if (mySide === null) {
-            if (data.players === 1) { mySide = G; sessionStorage.setItem('shogi-side', G); update(roomRef, { players: 2 }); }
-            else { mySide = S; sessionStorage.setItem('shogi-side', S); }
-        }
-        
-        let rawBoard = data.board || [];
-        board = Array(9).fill(null).map((_, r) => {
-            let row = rawBoard[r] || [];
-            return Array(9).fill(null).map((_, c) => row[c] || null);
+
+        const result = await runTransaction(roomRef, (currentData) => {
+            if (currentData === null) {
+                return { players: 1, status: 'waiting', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S };
+            } else if (currentData.players === 1) {
+                currentData.players = 2;
+                currentData.status = 'playing';
+                return currentData;
+            }
+            return; // 3人目以降は変更なし
         });
 
-        document.getElementById('overlay').style.display = 'none';
-        hands = data.hands || {S:[], G:[]};
-        turn = data.turn;
-        render();
+        if (result.committed) {
+            const data = result.snapshot.val();
+            mySide = (data.players === 1) ? S : G;
+            sessionStorage.setItem('shogi-side-' + roomId, mySide);
+        } else {
+            mySide = S; // 観戦モード（暫定）
+        }
+    }
+
+    // メイン起動処理
+    joinRoom().then(() => {
+        onValue(roomRef, (snapshot) => {
+            const data = snapshot.val();
+            if (!data) return;
+
+            // 盤面の正規化
+            let rawBoard = data.board || [];
+            board = Array(9).fill(null).map((_, r) => {
+                let row = rawBoard[r] || [];
+                return Array(9).fill(null).map((_, c) => row[c] || null);
+            });
+
+            hands = data.hands || {S:[], G:[]};
+            turn = data.turn;
+
+            if (data.status === 'playing' || data.players >= 2) {
+                document.getElementById('overlay').style.display = 'none';
+            } else {
+                document.getElementById('status-msg').innerText = "対戦相手を待っています...";
+            }
+            render();
+        });
     });
 
-    // --- ロジック：駒の利き計算 (王手判定用) ---
+    // --- ロジック：駒の利き計算 ---
     function getPieceKiki(r, c, p, targetBoard) {
         let moves = [];
         let rKey = p.type;
@@ -139,7 +166,6 @@
         return moves;
     }
 
-    // --- ロジック：王手判定 ---
     function isKingInCheck(side, targetBoard) {
         let kingPos = null;
         for(let r=0; r<9; r++) {
@@ -165,10 +191,7 @@
 
     function getLegalMoves(r, c, p) {
         let rawMoves = getPieceKiki(r, c, p, board);
-        // 自分の駒があるマスは除外
         rawMoves = rawMoves.filter(m => !board[m[0]][m[1]] || board[m[0]][m[1]].side !== p.side);
-        
-        // 自殺手フィルタリング
         return rawMoves.filter(m => {
             const nextBoard = JSON.parse(JSON.stringify(board));
             nextBoard[m[0]][m[1]] = nextBoard[r][c];
@@ -181,7 +204,7 @@
         const bEl = document.getElementById('board');
         bEl.innerHTML = '';
         const isCheck = isKingInCheck(mySide, board);
-        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 ${isCheck ? "【王手！】" : ""}`;
+        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${mySide === S ? "先手" : "後手"}:あなた) ${isCheck ? "！王手！" : ""}`;
         document.getElementById('turn-display').style.background = isCheck ? "#d32f2f" : "#333";
 
         for (let r = 0; r < 9; r++) {
@@ -231,13 +254,9 @@
         for (let r = 0; r < 9; r++) {
             for (let c = 0; c < 9; c++) {
                 if (!board[r][c]) {
-                    // 二歩チェック
                     if (type === '歩' && board.some(row => row[c] && row[c].type === '歩' && row[c].side === mySide && !row[c].p)) continue;
-                    // 行き所のない駒
                     if ((type === '歩' || type === '香') && (mySide === S ? r === 0 : r === 8)) continue;
                     if (type === '桂' && (mySide === S ? r <= 1 : r >= 7)) continue;
-                    
-                    // 打った後の王手放置チェック
                     const nextBoard = JSON.parse(JSON.stringify(board));
                     nextBoard[r][c] = { type, side: mySide, p: false };
                     if (!isKingInCheck(mySide, nextBoard)) ms.push([r, c]);
@@ -258,7 +277,6 @@
                     const p = board[selected.r][selected.c];
                     if (board[r][c]) hands[mySide].push({ type: board[r][c].type, side: mySide, p: false });
                     
-                    // 成りの判定ロジック
                     const isEnemyZone = (mySide === S ? (r <= 2 || selected.r <= 2) : (r >= 6 || selected.r >= 6));
                     if (!p.p && isEnemyZone) {
                         const mustPromote = (p.type === '歩' || p.type === '香') ? (mySide === S ? r === 0 : r === 8) : 
@@ -270,7 +288,6 @@
                 const nextTurn = (turn === S ? G : S);
                 selected = null; possibleMoves = [];
                 update(roomRef, { board: board, hands: hands, turn: nextTurn });
-                render(); 
             } else { selected = null; possibleMoves = []; render(); }
         } else if (board[r][c] && board[r][c].side === mySide) {
             selected = { r, c }; 
