@@ -330,7 +330,9 @@ function render() {
     if (turn !== mySide) return;
     if (selected) {
         if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
+
             if (selected.fromHand) {
+alert('hand');
                 board[r][c] = { type: selected.type, side: mySide, p: false };
                 hands[mySide].splice(selected.idx, 1);
             } else {
@@ -342,7 +344,7 @@ function render() {
                 }
 
                 // 「私」が誰かではなく、「動かした駒」が先手か後手かで敵陣を決める
-const isEntry = (p.side === S ? r <= 2 : r >= 6);
+                const isEntry = (p.side === S ? r <= 2 : r >= 6);
 
 alert(p.side);
 alert(r);
