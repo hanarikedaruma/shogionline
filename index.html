@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>オンライン将棋 - 役職固定・本格ルール版</title>
+    <title>オンライン将棋 - 最終安定版</title>
     <style>
         :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
         .hand { display: flex; width: var(--board-size); height: 50px; background: #d2b48c; align-items: center; padding: 0 5px; border: 2px solid #8b4513; box-sizing: border-box; gap: 4px; overflow-x: auto; }
-        .turn-box { padding: 8px 20px; border-radius: 20px; background: #333; color: #fff; margin: 5px; font-weight: bold; font-size: 14px; }
+        .turn-box { padding: 8px 20px; border-radius: 20px; background: #333; color: #fff; margin: 5px; font-weight: bold; font-size: 14px; min-width: 150px; text-align: center; }
         #board { display: grid; grid-template-columns: repeat(9, var(--cell-size)); grid-template-rows: repeat(9, var(--cell-size)); width: var(--board-size); height: var(--board-size); border: 2px solid #333; background: var(--board-color); }
         .cell { border: 0.5px solid rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; position: relative; width: var(--cell-size); height: var(--cell-size); cursor: pointer; }
         .piece-shape { width: 85%; height: 88%; background: var(--piece-color); clip-path: polygon(50% 0%, 100% 25%, 100% 100%, 0% 100%, 0% 25%); display: flex; align-items: center; justify-content: center; font-size: calc(var(--cell-size) * 0.45); font-weight: bold; border: 1px solid #444; pointer-events: none; }
@@ -16,19 +16,21 @@
         .promoted { color: #d32f2f; }
         .selected { background: rgba(255, 235, 59, 0.8) !important; }
         .movable::after { content: ""; width: 14px; height: 14px; background: rgba(0, 180, 0, 0.4); border-radius: 50%; position: absolute; pointer-events: none; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; }
-        .hand-piece { background: #ffebbc; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; cursor: pointer; font-size: 12px; font-weight: bold; }
+        /* オーバーレイの改善 */
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; pointer-events: all; }
+        .hand-piece { background: #ffebbc; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; cursor: pointer; font-size: 12px; font-weight: bold; color: black; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <h2 id="status-msg">対局室を準備中...</h2>
-    <p id="room-url" style="word-break: break-all; font-size: 0.8rem;"></p>
+    <h2 id="status-msg">接続中...</h2>
+    <p id="room-info">部屋を作成しています...</p>
+    <p id="room-url" style="word-break: break-all; font-size: 0.7rem; color: #aaa; margin-top: 10px;"></p>
 </div>
 
 <div id="hand-gote" class="hand"></div>
-<div id="turn-display" class="turn-box">接続中...</div>
+<div id="turn-display" class="turn-box">準備中...</div>
 <div id="board"></div>
 <div id="hand-sente" class="hand"></div>
 
@@ -50,9 +52,10 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
     const urlParams = new URLSearchParams(window.location.search);
-    const roomId = urlParams.get('room') || "R-" + Math.floor(Math.random() * 10000);
+    const roomId = urlParams.get('room') || "R" + Math.floor(Math.random() * 9000 + 1000);
     if (!urlParams.get('room')) window.history.replaceState(null, null, "?room=" + roomId);
-    document.getElementById('room-url').innerText = "招待用URL: " + window.location.href;
+
+    document.getElementById('room-url').innerText = "招待URL: " + window.location.href;
 
     const roomRef = ref(db, 'rooms/' + roomId);
     const S='S', G='G';
@@ -86,60 +89,59 @@
         return b;
     }
 
-    // --- 役職の決定ロジック（トランザクション使用） ---
-    async function joinRoom() {
+    async function initRoom() {
         const savedSide = sessionStorage.getItem('shogi-side-' + roomId);
-        if (savedSide) {
-            mySide = savedSide;
-            return;
-        }
-
+        
         const result = await runTransaction(roomRef, (currentData) => {
             if (currentData === null) {
                 return { players: 1, status: 'waiting', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S };
-            } else if (currentData.players === 1) {
+            } else if (currentData.players === 1 && !savedSide) {
                 currentData.players = 2;
                 currentData.status = 'playing';
                 return currentData;
             }
-            return; // 3人目以降は変更なし
+            return; 
         });
 
         if (result.committed) {
             const data = result.snapshot.val();
-            mySide = (data.players === 1) ? S : G;
-            sessionStorage.setItem('shogi-side-' + roomId, mySide);
+            if (savedSide) {
+                mySide = savedSide;
+            } else {
+                mySide = (data.players === 1) ? S : G;
+                sessionStorage.setItem('shogi-side-' + roomId, mySide);
+            }
         } else {
-            mySide = S; // 観戦モード（暫定）
+            // トランザクションが失敗（既に2人いる場合など）
+            mySide = savedSide || null;
         }
-    }
 
-    // メイン起動処理
-    joinRoom().then(() => {
+        // 監視開始
         onValue(roomRef, (snapshot) => {
             const data = snapshot.val();
             if (!data) return;
 
-            // 盤面の正規化
+            // UIの切り替え判定を強化
+            if (data.status === 'playing' || data.players >= 2) {
+                document.getElementById('overlay').style.setProperty('display', 'none', 'important');
+            } else {
+                document.getElementById('status-msg').innerText = "対戦相手を待っています...";
+                document.getElementById('room-info').innerText = "先手として入室しました。相手にURLを送ってください。";
+            }
+
+            // 盤面の同期
             let rawBoard = data.board || [];
             board = Array(9).fill(null).map((_, r) => {
                 let row = rawBoard[r] || [];
                 return Array(9).fill(null).map((_, c) => row[c] || null);
             });
-
             hands = data.hands || {S:[], G:[]};
             turn = data.turn;
-
-            if (data.status === 'playing' || data.players >= 2) {
-                document.getElementById('overlay').style.display = 'none';
-            } else {
-                document.getElementById('status-msg').innerText = "対戦相手を待っています...";
-            }
             render();
         });
-    });
+    }
 
-    // --- ロジック：駒の利き計算 ---
+    // 駒の利き計算
     function getPieceKiki(r, c, p, targetBoard) {
         let moves = [];
         let rKey = p.type;
@@ -181,8 +183,7 @@
             for(let c=0; c<9; c++) {
                 const p = targetBoard[r][c];
                 if(p && p.side === opponent) {
-                    const kiki = getPieceKiki(r, c, p, targetBoard);
-                    if(kiki.some(m => m[0] === kingPos[0] && m[1] === kingPos[1])) return true;
+                    if (getPieceKiki(r, c, p, targetBoard).some(m => m[0] === kingPos[0] && m[1] === kingPos[1])) return true;
                 }
             }
         }
@@ -190,8 +191,7 @@
     }
 
     function getLegalMoves(r, c, p) {
-        let rawMoves = getPieceKiki(r, c, p, board);
-        rawMoves = rawMoves.filter(m => !board[m[0]][m[1]] || board[m[0]][m[1]].side !== p.side);
+        let rawMoves = getPieceKiki(r, c, p, board).filter(m => !board[m[0]][m[1]] || board[m[0]][m[1]].side !== p.side);
         return rawMoves.filter(m => {
             const nextBoard = JSON.parse(JSON.stringify(board));
             nextBoard[m[0]][m[1]] = nextBoard[r][c];
@@ -202,9 +202,11 @@
 
     function render() {
         const bEl = document.getElementById('board');
+        if (!bEl) return;
         bEl.innerHTML = '';
         const isCheck = isKingInCheck(mySide, board);
-        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${mySide === S ? "先手" : "後手"}:あなた) ${isCheck ? "！王手！" : ""}`;
+        const displaySide = mySide === S ? "先手" : (mySide === G ? "後手" : "観戦");
+        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${displaySide}) ${isCheck ? "！王手！" : ""}`;
         document.getElementById('turn-display').style.background = isCheck ? "#d32f2f" : "#333";
 
         for (let r = 0; r < 9; r++) {
@@ -228,10 +230,9 @@
     }
 
     function renderHands() {
-        const sH = document.getElementById('hand-sente'), gH = document.getElementById('hand-gote');
-        sH.innerHTML = "先手: "; gH.innerHTML = "後手: ";
         [S, G].forEach(side => {
-            const el = side === S ? sH : gH;
+            const el = document.getElementById(side === S ? 'hand-sente' : 'hand-gote');
+            el.innerHTML = (side === S ? "先手: " : "後手: ");
             (hands[side] || []).forEach((p, i) => {
                 const sp = document.createElement('span');
                 sp.className = 'hand-piece';
@@ -276,7 +277,6 @@
                 } else {
                     const p = board[selected.r][selected.c];
                     if (board[r][c]) hands[mySide].push({ type: board[r][c].type, side: mySide, p: false });
-                    
                     const isEnemyZone = (mySide === S ? (r <= 2 || selected.r <= 2) : (r >= 6 || selected.r >= 6));
                     if (!p.p && isEnemyZone) {
                         const mustPromote = (p.type === '歩' || p.type === '香') ? (mySide === S ? r === 0 : r === 8) : 
@@ -287,16 +287,16 @@
                 }
                 const nextTurn = (turn === S ? G : S);
                 selected = null; possibleMoves = [];
-                update(roomRef, { board: board, hands: hands, turn: nextTurn });
+                update(roomRef, { board, hands, turn: nextTurn });
             } else { selected = null; possibleMoves = []; render(); }
         } else if (board[r][c] && board[r][c].side === mySide) {
-            selected = { r, c }; 
-            possibleMoves = getLegalMoves(r, c, board[r][c]); 
-            render();
+            selected = { r, c }; possibleMoves = getLegalMoves(r, c, board[r][c]); render();
         }
     }
 
     function getPName(t) { return {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"}[t] || t; }
+
+    initRoom();
 </script>
 </body>
 </html>
