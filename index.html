@@ -180,35 +180,47 @@
     }
 
     function isKingInCheck(side, targetBoard) {
-        let kr = -1, kc = -1;
-        for (let r = 0; r < 9; r++) {
-            for (let c = 0; c < 9; c++) {
-                if (targetBoard[r][c] && targetBoard[r][c].type === '玉' && targetBoard[r][c].side === side) {
-                    kr = r; kc = c; break;
-                }
+    let kr = -1, kc = -1;
+    // 1. 指定された側の玉の位置を探す
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            const p = targetBoard[r][c];
+            if (p && p.side === side && (p.type === '玉' || p.type === '王')) {
+                kr = r; kc = c; break;
             }
         }
-        if (kr === -1) return false;
-        const enemySide = side === S ? G : S;
-        for (let r = 0; r < 9; r++) {
-            for (let c = 0; c < 9; c++) {
-                const p = targetBoard[r][c];
-                if (p && p.side === enemySide) {
-                    if (getPseudoLegalMoves(r, c, p, targetBoard).some(m => m[0] === kr && m[1] === kc)) return true;
-                }
-            }
-        }
-        return false;
     }
+    if (kr === -1) return false;
+
+    // 2. 相手の全駒の「効き」に玉が入っているかチェック
+    const enemySide = (side === S ? G : S);
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            const p = targetBoard[r][c];
+            if (p && p.side === enemySide) {
+                // 擬似合法手（動ける場所）に玉の座標が含まれるか
+                const moves = getPseudoLegalMoves(r, c, p, targetBoard);
+                if (moves.some(m => m[0] === kr && m[1] === kc)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 
     function getLegalMoves(r, c, p) {
-        return getPseudoLegalMoves(r, c, p, board).filter(([nr, nc]) => {
-            const nextBoard = JSON.parse(JSON.stringify(board));
-            nextBoard[nr][nc] = nextBoard[r][c];
-            nextBoard[r][c] = null;
-            return !isKingInCheck(p.side, nextBoard);
-        });
-    }
+    // 擬似合法手の中から、指した後に自玉が王手にならないものだけを抽出
+    return getPseudoLegalMoves(r, c, p, board).filter(([nr, nc]) => {
+        // 現在の盤面をディープコピーしてシミュレート
+        const nextBoard = JSON.parse(JSON.stringify(board));
+        // 移動を実行
+        nextBoard[nr][nc] = nextBoard[r][c];
+        nextBoard[r][c] = null;
+        // その盤面で自玉が王手か？
+        return !isKingInCheck(p.side, nextBoard);
+    });
+}
+
 
     function getDropMoves(type) {
         let ms = [];
@@ -283,43 +295,55 @@
     }
 
     function handleClick(r, c) {
-        if (turn !== mySide) return;
-        if (selected) {
-            if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
-                if (selected.fromHand) {
-                    board[r][c] = { type: selected.type, side: mySide, p: false };
-                    hands[mySide].splice(selected.idx, 1);
-                } else {
-                    const p = board[selected.r][selected.c];
-                    if (board[r][c]) {
-                        const capturedType = DEMO_MAP[board[r][c].type] || board[r][c].type;
-                        hands[mySide].push({ type: capturedType, side: mySide, p: false });
-                    }
-                    // 成り判定
-                    const isEntry = mySide === S ? r <= 2 : r >= 6;
-                    const isExit = mySide === S ? selected.r <= 2 : selected.r >= 6;
-                    const canPromote = PROM_MAP[p.type] && (isEntry || isExit);
-                    const forcePromote = (p.type === '歩' || p.type === '香') ? (mySide === S ? r === 0 : r === 8) : 
-                                        (p.type === '桂') ? (mySide === S ? r <= 1 : r >= 7) : false;
-                    
-                    if (canPromote && !p.p) {
-                        if (forcePromote || confirm("成りますか？")) {
-                            p.type = PROM_MAP[p.type];
-                            p.p = true;
-                        }
-                    }
-                    board[r][c] = p; board[selected.r][selected.c] = null;
+    if (turn !== mySide) return;
+    if (selected) {
+        if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
+            if (selected.fromHand) {
+                board[r][c] = { type: selected.type, side: mySide, p: false };
+                hands[mySide].splice(selected.idx, 1);
+            } else {
+                const p = board[selected.r][selected.c];
+                if (board[r][c]) {
+                    // 相手の駒を取る時は常に成る前の名前に戻して持ち駒へ
+                    const capturedType = DEMO_MAP[board[r][c].type] || board[r][c].type;
+                    hands[mySide].push({ type: capturedType, side: mySide, p: false });
                 }
-                const nextTurn = turn === S ? G : S;
-                selected = null; possibleMoves = [];
-                update(roomRef, { board, hands, turn: nextTurn });
-            } else { selected = null; possibleMoves = []; render(); }
-        } else if (board[r][c] && board[r][c].side === mySide) {
-            selected = { r, c }; 
-            possibleMoves = getLegalMoves(r, c, board[r][c]); 
-            render();
+
+                // --- 修正版：成り判定ロジック ---
+                const isEntry = (mySide === S ? r <= 2 : r >= 6);
+                const isExit = (mySide === S ? selected.r <= 2 : selected.r >= 6);
+                
+                // 内部データが「と」等になっていても「歩」として判定するために DEMO_MAP を使用
+                const baseType = DEMO_MAP[p.type] || p.type; 
+                const canPromote = PROM_MAP[baseType] && (isEntry || isExit);
+                
+                const forcePromote = (baseType === '歩' || baseType === '香') ? 
+                                    (mySide === S ? r === 0 : r === 8) : 
+                                    (baseType === '桂') ? (mySide === S ? r <= 1 : r >= 7) : false;
+
+                if (canPromote && !p.p) {
+                    if (forcePromote || confirm("成りますか？")) {
+                        p.type = PROM_MAP[baseType]; // 昇進後の名前に書き換え
+                        p.p = true;
+                    }
+                }
+                board[r][c] = p; 
+                board[selected.r][selected.c] = null;
+            }
+            const nextTurn = (turn === S ? G : S);
+            selected = null; possibleMoves = [];
+            // サーバーへ更新
+            update(roomRef, { board, hands, turn: nextTurn });
+        } else { 
+            selected = null; possibleMoves = []; render(); 
         }
+    } else if (board[r][c] && board[r][c].side === mySide) {
+        selected = { r, c }; 
+        possibleMoves = getLegalMoves(r, c, board[r][c]); 
+        render();
     }
+}
+
 
     function getPName(t) { return {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"}[t] || t; }
 
