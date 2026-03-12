@@ -145,45 +145,67 @@
         document.getElementById('hand-gote').innerText = "後手駒: " + (hands[G] ? hands[G].map(x=>x.type).join(" ") : "");
     }
 
-    function handleClick(r, c) {
+        function handleClick(r, c) {
+        // デバッグログ：タップした場所をコンソールに表示
+        console.log(`タップ: ${r}, ${c} | mySide: ${mySide} | turn: ${turn} | 選択中: ${selected ? "あり" : "なし"}`);
+
+        // 自分の手番でないなら無視
         if (turn !== mySide) return;
 
         if (selected) {
+            // --- 2回目のタップ（移動先を決定） ---
+            
+            // 1. 移動元の駒を取得
             const p = board[selected.r][selected.c];
-            if (!p) { selected = null; return; }
+            if (!p) {
+                selected = null;
+                render();
+                return;
+            }
 
-            // 移動先に駒があるかチェック
-            if (board[r][c]) {
-                if (board[r][c].side === mySide) { // 自分の駒なら選択し直し
-                    selected = {r, c};
-                    render();
-                    return;
-                }
-                // 相手の駒を取る
+            // 2. 自分の駒を再度タップした場合は、選択し直し
+            if (board[r][c] && board[r][c].side === mySide) {
+                selected = {r, c};
+                render();
+                return;
+            }
+
+            // 3. 移動実行
+            // 相手の駒があれば持ち駒へ
+            if (board[r][c] && board[r][c].side !== mySide) {
                 if(!hands[mySide]) hands[mySide] = [];
                 hands[mySide].push({type: board[r][c].type, side: mySide, p: false});
             }
 
-            // 盤面更新
+            // 盤面を更新
             board[r][c] = p;
             board[selected.r][selected.c] = null;
             
-            // 配列の穴あき（null）がオブジェクト化するのを防ぐため、明示的にクリーンアップ
-            const cleanBoard = JSON.parse(JSON.stringify(board));
-
+            // 4. Firebaseへ送信（ここで turn を交代）
+            // JSON.stringify を通すことで、Firebaseでの配列崩れ（オブジェクト化）を防止
+            const updateTurn = (turn === S ? G : S);
+            
             update(roomRef, {
-                board: cleanBoard,
+                board: JSON.parse(JSON.stringify(board)),
                 hands: hands,
-                turn: turn === S ? G : S
+                turn: updateTurn
+            }).then(() => {
+                console.log("送信成功");
+            }).catch((err) => {
+                console.error("Firebase更新エラー:", err);
             });
+
             selected = null;
+            render();
         } else {
+            // --- 1回目のタップ（駒を選択） ---
             if (board[r] && board[r][c] && board[r][c].side === mySide) {
                 selected = {r, c};
                 render();
             }
         }
     }
+
 
     function getPName(t) {
         const map = {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"};
