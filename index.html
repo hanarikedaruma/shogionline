@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>オンライン将棋 - 最終安定版</title>
+    <title>オンライン将棋 - 役職固定・安定版</title>
     <style>
         :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
@@ -16,8 +16,7 @@
         .promoted { color: #d32f2f; }
         .selected { background: rgba(255, 235, 59, 0.8) !important; }
         .movable::after { content: ""; width: 14px; height: 14px; background: rgba(0, 180, 0, 0.4); border-radius: 50%; position: absolute; pointer-events: none; }
-        /* オーバーレイの改善 */
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; pointer-events: all; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; }
         .hand-piece { background: #ffebbc; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; cursor: pointer; font-size: 12px; font-weight: bold; color: black; }
     </style>
 </head>
@@ -25,7 +24,7 @@
 
 <div id="overlay">
     <h2 id="status-msg">接続中...</h2>
-    <p id="room-info">部屋を作成しています...</p>
+    <p id="room-info">同期しています...</p>
     <p id="room-url" style="word-break: break-all; font-size: 0.7rem; color: #aaa; margin-top: 10px;"></p>
 </div>
 
@@ -36,7 +35,7 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set, onValue, update, runTransaction, get } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyASo0xVEWj_XeErm7tO1ZjbjWyfJADgydQ",
@@ -54,7 +53,6 @@
     const urlParams = new URLSearchParams(window.location.search);
     const roomId = urlParams.get('room') || "R" + Math.floor(Math.random() * 9000 + 1000);
     if (!urlParams.get('room')) window.history.replaceState(null, null, "?room=" + roomId);
-
     document.getElementById('room-url').innerText = "招待URL: " + window.location.href;
 
     const roomRef = ref(db, 'rooms/' + roomId);
@@ -89,47 +87,66 @@
         return b;
     }
 
-    async function initRoom() {
-        const savedSide = sessionStorage.getItem('shogi-side-' + roomId);
+    // --- 入室管理の抜本的修正 ---
+    async function joinRoom() {
+        // 1. まずローカルに保存された役職があるか確認
+        const savedSide = sessionStorage.getItem(`shogi-side-${roomId}`);
         
         const result = await runTransaction(roomRef, (currentData) => {
-            if (currentData === null) {
-                return { players: 1, status: 'waiting', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S };
-            } else if (currentData.players === 1 && !savedSide) {
+            if (!currentData) {
+                // 初めての部屋作成
+                return { 
+                    sente_id: 'joined', // 誰かが先手になった印
+                    players: 1, 
+                    status: 'waiting', 
+                    board: getInitialBoard(), 
+                    hands: {S:[], G:[]}, 
+                    turn: S 
+                };
+            }
+            
+            // すでに自分が役職を持っている場合は何もしない
+            if (savedSide) return;
+
+            if (currentData.players === 1) {
+                // 2人目として入室
                 currentData.players = 2;
+                currentData.gote_id = 'joined';
                 currentData.status = 'playing';
                 return currentData;
             }
-            return; 
+            return; // 満員
         });
 
-        if (result.committed) {
+        if (savedSide) {
+            mySide = savedSide;
+        } else if (result.committed) {
             const data = result.snapshot.val();
-            if (savedSide) {
-                mySide = savedSide;
-            } else {
-                mySide = (data.players === 1) ? S : G;
-                sessionStorage.setItem('shogi-side-' + roomId, mySide);
-            }
+            // playersが1なら先手、2なら後手
+            mySide = (data.players === 1) ? S : G;
+            sessionStorage.setItem(`shogi-side-${roomId}`, mySide);
         } else {
-            // トランザクションが失敗（既に2人いる場合など）
-            mySide = savedSide || null;
+            // 観戦モード
+            mySide = null;
         }
 
-        // 監視開始
+        startSync();
+    }
+
+    function startSync() {
         onValue(roomRef, (snapshot) => {
             const data = snapshot.val();
             if (!data) return;
 
-            // UIの切り替え判定を強化
-            if (data.status === 'playing' || data.players >= 2) {
-                document.getElementById('overlay').style.setProperty('display', 'none', 'important');
+            // UI切り替え
+            if (data.status === 'playing') {
+                document.getElementById('overlay').style.display = 'none';
             } else {
                 document.getElementById('status-msg').innerText = "対戦相手を待っています...";
-                document.getElementById('room-info').innerText = "先手として入室しました。相手にURLを送ってください。";
+                document.getElementById('room-info').innerText = "あなたは【先手】です。URLを相手に送ってください。";
             }
 
-            // 盤面の同期
+            // データ同期
             let rawBoard = data.board || [];
             board = Array(9).fill(null).map((_, r) => {
                 let row = rawBoard[r] || [];
@@ -141,7 +158,7 @@
         });
     }
 
-    // 駒の利き計算
+    // --- 以降、将棋ロジック (不変) ---
     function getPieceKiki(r, c, p, targetBoard) {
         let moves = [];
         let rKey = p.type;
@@ -202,10 +219,9 @@
 
     function render() {
         const bEl = document.getElementById('board');
-        if (!bEl) return;
         bEl.innerHTML = '';
         const isCheck = isKingInCheck(mySide, board);
-        const displaySide = mySide === S ? "先手" : (mySide === G ? "後手" : "観戦");
+        const displaySide = mySide === S ? "先手" : (mySide === G ? "後手" : "観戦中");
         document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${displaySide}) ${isCheck ? "！王手！" : ""}`;
         document.getElementById('turn-display').style.background = isCheck ? "#d32f2f" : "#333";
 
@@ -296,7 +312,7 @@
 
     function getPName(t) { return {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"}[t] || t; }
 
-    initRoom();
+    joinRoom();
 </script>
 </body>
 </html>
