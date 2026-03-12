@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>オンライン将棋 - 決定版</title>
+    <title>オンライン将棋 - 本格ルール版</title>
     <style>
         :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
@@ -16,7 +16,7 @@
         .promoted { color: #d32f2f; }
         .selected { background: rgba(255, 235, 59, 0.8) !important; }
         .movable::after { content: ""; width: 14px; height: 14px; background: rgba(0, 180, 0, 0.4); border-radius: 50%; position: absolute; pointer-events: none; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; }
         .hand-piece { background: #ffebbc; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; cursor: pointer; font-size: 12px; font-weight: bold; }
     </style>
 </head>
@@ -90,37 +90,30 @@
         const data = snapshot.val();
         if (!data) {
             mySide = S; sessionStorage.setItem('shogi-side', S);
-            set(roomRef, { players: 1, status: 'waiting', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S });
+            set(roomRef, { players: 1, status: 'playing', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S });
             return;
         }
-
-        // サイドの固定化（リロード対策）
         const savedSide = sessionStorage.getItem('shogi-side');
         if (savedSide) { mySide = savedSide; }
         else if (mySide === null) {
-            if (data.players === 1) { mySide = G; sessionStorage.setItem('shogi-side', G); update(roomRef, { players: 2, status: 'playing' }); }
+            if (data.players === 1) { mySide = G; sessionStorage.setItem('shogi-side', G); update(roomRef, { players: 2 }); }
             else { mySide = S; sessionStorage.setItem('shogi-side', S); }
         }
-
-        // 盤面データの正規化（Firebaseの空配列削除対策）
+        
         let rawBoard = data.board || [];
         board = Array(9).fill(null).map((_, r) => {
             let row = rawBoard[r] || [];
             return Array(9).fill(null).map((_, c) => row[c] || null);
         });
 
-        if (data.status === 'playing') {
-            document.getElementById('overlay').style.display = 'none';
-            hands = data.hands || {S:[], G:[]};
-            if (!hands.S) hands.S = []; if (!hands.G) hands.G = [];
-            turn = data.turn;
-            render();
-        } else {
-            document.getElementById('status-msg').innerText = "対戦相手を待っています...";
-        }
+        document.getElementById('overlay').style.display = 'none';
+        hands = data.hands || {S:[], G:[]};
+        turn = data.turn;
+        render();
     });
 
-    function getValidMoves(r, c, p) {
+    // --- ロジック：駒の利き計算 (王手判定用) ---
+    function getPieceKiki(r, c, p, targetBoard) {
         let moves = [];
         let rKey = p.type;
         if (p.p && !['飛','角'].includes(p.type)) rKey = '金';
@@ -131,34 +124,65 @@
 
         rule.vec.forEach(([dr, dc]) => {
             for (let i = 1; i <= rule.rng; i++) {
-                let nr = r + dr * dir, nc = c + dc * dir;
-                // 香車・飛車・角車のような長距離駒の連続計算
-                if (rule.rng > 1) { nr = r + dr * dir * i; nc = c + dc * dir * i; }
-                
+                let nr = r + dr * dir * i, nc = c + dc * dir * i;
                 if (nr < 0 || nr >= 9 || nc < 0 || nc >= 9) break;
-                if (!board[nr][nc]) { moves.push([nr, nc]); }
-                else {
-                    if (board[nr][nc].side !== p.side) moves.push([nr, nc]);
-                    break;
-                }
-                if (rule.rng === 1) break; 
+                moves.push([nr, nc]);
+                if (targetBoard[nr][nc]) break;
             }
         });
         if (rule.ex) {
             rule.ex.forEach(([dr, dc]) => {
                 let nr = r + dr, nc = c + dc;
-                if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) {
-                    if (!board[nr][nc] || board[nr][nc].side !== p.side) moves.push([nr, nc]);
-                }
+                if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) moves.push([nr, nc]);
             });
         }
         return moves;
     }
 
+    // --- ロジック：王手判定 ---
+    function isKingInCheck(side, targetBoard) {
+        let kingPos = null;
+        for(let r=0; r<9; r++) {
+            for(let c=0; c<9; c++) {
+                if(targetBoard[r][c] && targetBoard[r][c].type === '玉' && targetBoard[r][c].side === side) {
+                    kingPos = [r, c]; break;
+                }
+            }
+        }
+        if(!kingPos) return false;
+        const opponent = side === S ? G : S;
+        for(let r=0; r<9; r++) {
+            for(let c=0; c<9; c++) {
+                const p = targetBoard[r][c];
+                if(p && p.side === opponent) {
+                    const kiki = getPieceKiki(r, c, p, targetBoard);
+                    if(kiki.some(m => m[0] === kingPos[0] && m[1] === kingPos[1])) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function getLegalMoves(r, c, p) {
+        let rawMoves = getPieceKiki(r, c, p, board);
+        // 自分の駒があるマスは除外
+        rawMoves = rawMoves.filter(m => !board[m[0]][m[1]] || board[m[0]][m[1]].side !== p.side);
+        
+        // 自殺手フィルタリング
+        return rawMoves.filter(m => {
+            const nextBoard = JSON.parse(JSON.stringify(board));
+            nextBoard[m[0]][m[1]] = nextBoard[r][c];
+            nextBoard[r][c] = null;
+            return !isKingInCheck(p.side, nextBoard);
+        });
+    }
+
     function render() {
         const bEl = document.getElementById('board');
         bEl.innerHTML = '';
-        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${mySide === S ? "先手" : "後手"}:あなた)`;
+        const isCheck = isKingInCheck(mySide, board);
+        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 ${isCheck ? "【王手！】" : ""}`;
+        document.getElementById('turn-display').style.background = isCheck ? "#d32f2f" : "#333";
 
         for (let r = 0; r < 9; r++) {
             for (let c = 0; c < 9; c++) {
@@ -193,7 +217,7 @@
                     sp.onclick = (e) => { 
                         e.stopPropagation(); 
                         selected = { fromHand: true, type: p.type, idx: i }; 
-                        possibleMoves = getDropMoves(p.type); 
+                        possibleMoves = getDropMoves(p.type);
                         render(); 
                     };
                 }
@@ -207,10 +231,16 @@
         for (let r = 0; r < 9; r++) {
             for (let c = 0; c < 9; c++) {
                 if (!board[r][c]) {
+                    // 二歩チェック
                     if (type === '歩' && board.some(row => row[c] && row[c].type === '歩' && row[c].side === mySide && !row[c].p)) continue;
+                    // 行き所のない駒
                     if ((type === '歩' || type === '香') && (mySide === S ? r === 0 : r === 8)) continue;
                     if (type === '桂' && (mySide === S ? r <= 1 : r >= 7)) continue;
-                    ms.push([r, c]);
+                    
+                    // 打った後の王手放置チェック
+                    const nextBoard = JSON.parse(JSON.stringify(board));
+                    nextBoard[r][c] = { type, side: mySide, p: false };
+                    if (!isKingInCheck(mySide, nextBoard)) ms.push([r, c]);
                 }
             }
         }
@@ -219,7 +249,6 @@
 
     function handleClick(r, c) {
         if (turn !== mySide) return;
-
         if (selected) {
             if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
                 if (selected.fromHand) {
@@ -227,31 +256,25 @@
                     hands[mySide].splice(selected.idx, 1);
                 } else {
                     const p = board[selected.r][selected.c];
-                    if (board[r][c]) {
-                        if (board[r][c].type === '玉') alert("王を取った！勝ちです！");
-                        hands[mySide].push({ type: board[r][c].type, side: mySide, p: false });
+                    if (board[r][c]) hands[mySide].push({ type: board[r][c].type, side: mySide, p: false });
+                    
+                    // 成りの判定ロジック
+                    const isEnemyZone = (mySide === S ? (r <= 2 || selected.r <= 2) : (r >= 6 || selected.r >= 6));
+                    if (!p.p && isEnemyZone) {
+                        const mustPromote = (p.type === '歩' || p.type === '香') ? (mySide === S ? r === 0 : r === 8) : 
+                                           (p.type === '桂' ? (mySide === S ? r <= 1 : r >= 7) : false);
+                        if (mustPromote || confirm("成りますか？")) p.p = true;
                     }
-                    if (!p.p && ((mySide === S ? r <= 2 || selected.r <= 2 : r >= 6 || selected.r >= 6))) {
-                        if (confirm("成りますか？")) p.p = true;
-                    }
-                    if (!p.p && ((p.type === '歩'||p.type === '香') && (mySide===S?r===0:r===8))) p.p = true;
-                    if (!p.p && (p.type === '桂' && (mySide===S?r<=1:r>=7))) p.p = true;
                     board[r][c] = p; board[selected.r][selected.c] = null;
                 }
-                
                 const nextTurn = (turn === S ? G : S);
-                // 送信前にローカルの選択状態をクリア（マーク残り防止）
-                selected = null; 
-                possibleMoves = [];
-                
+                selected = null; possibleMoves = [];
                 update(roomRef, { board: board, hands: hands, turn: nextTurn });
                 render(); 
-            } else { 
-                selected = null; possibleMoves = []; render(); 
-            }
+            } else { selected = null; possibleMoves = []; render(); }
         } else if (board[r][c] && board[r][c].side === mySide) {
             selected = { r, c }; 
-            possibleMoves = getValidMoves(r, c, board[r][c]); 
+            possibleMoves = getLegalMoves(r, c, board[r][c]); 
             render();
         }
     }
