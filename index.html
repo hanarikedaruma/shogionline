@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>オンライン将棋 - 役職固定・最終解決版</title>
+    <title>オンライン将棋 - 描画安定版</title>
     <style>
         :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
@@ -57,10 +57,9 @@
 
     const roomRef = ref(db, 'rooms/' + roomId);
     const S='S', G='G';
-    let board, hands, turn, mySide = null;
+    let board = null, hands = {S:[], G:[]}, turn = S, mySide = null;
     let selected = null, possibleMoves = [];
 
-    // ブラウザ固有のIDを生成または取得
     let userId = localStorage.getItem('shogi-user-id');
     if (!userId) {
         userId = 'U' + Math.random().toString(36).substr(2, 9);
@@ -95,54 +94,49 @@
     }
 
     async function joinRoom() {
-        const result = await runTransaction(roomRef, (data) => {
-            if (!data) {
-                // 1人目（先手）として作成
+        await runTransaction(roomRef, (currentData) => {
+            if (!currentData) {
                 return { 
-                    sente: userId, 
-                    gote: null,
-                    status: 'waiting', 
-                    board: getInitialBoard(), 
-                    hands: {S:[], G:[]}, 
-                    turn: S 
+                    sente: userId, gote: null, status: 'waiting', 
+                    board: getInitialBoard(), hands: {S:[], G:[]}, turn: S 
                 };
             }
-            // すでに自分が先手か後手なら更新なし
-            if (data.sente === userId || data.gote === userId) return data;
-
-            // 自分が登録されておらず、後手が空いていれば入る
-            if (data.sente && !data.gote) {
-                data.gote = userId;
-                data.status = 'playing';
-                return data;
+            if (currentData.sente === userId || currentData.gote === userId) return currentData;
+            if (!currentData.gote) {
+                currentData.gote = userId;
+                currentData.status = 'playing';
+                return currentData;
             }
-            return data; // 満員
+            return currentData;
         });
 
-        const finalData = result.snapshot.val();
-        if (finalData.sente === userId) mySide = S;
-        else if (finalData.gote === userId) mySide = G;
-        else mySide = null; // 観戦
-
+        // データ監視を確実に開始
         onValue(roomRef, (snapshot) => {
-            const d = snapshot.val();
-            if (!d) return;
+            const data = snapshot.val();
+            if (!data || !data.board) return;
 
-            if (d.status === 'playing') {
+            // 役職判定
+            if (data.sente === userId) mySide = S;
+            else if (data.gote === userId) mySide = G;
+            else mySide = null;
+
+            // UI更新
+            if (data.status === 'playing') {
                 document.getElementById('overlay').style.display = 'none';
             } else {
                 document.getElementById('status-msg').innerText = "対戦相手を待っています...";
                 document.getElementById('room-info').innerText = mySide === S ? "あなたは【先手】です。" : "待機中...";
             }
 
-            board = d.board;
-            hands = d.hands;
-            turn = d.turn;
+            // データの同期（確実に配列として処理）
+            board = data.board;
+            hands = data.hands || {S:[], G:[]};
+            turn = data.turn;
             render();
         });
     }
 
-    // 将棋ロジック
+    // 将棋ロジック (省略なし)
     function getPieceKiki(r, c, p, targetBoard) {
         let moves = [];
         let rKey = p.type;
@@ -151,7 +145,6 @@
         if (p.p && p.type === '飛') rKey = '龍';
         const rule = KOMA_RULE[rKey];
         const dir = p.side === S ? 1 : -1;
-
         rule.vec.forEach(([dr, dc]) => {
             for (let i = 1; i <= rule.rng; i++) {
                 let nr = r + dr * dir * i, nc = c + dc * dir * i;
@@ -203,6 +196,7 @@
 
     function render() {
         const bEl = document.getElementById('board');
+        if (!bEl || !board) return;
         bEl.innerHTML = '';
         const isCheck = isKingInCheck(mySide, board);
         const displaySide = mySide === S ? "先手" : (mySide === G ? "後手" : "観戦");
@@ -213,7 +207,7 @@
             for (let c = 0; c < 9; c++) {
                 const cell = document.createElement('div');
                 cell.className = 'cell';
-                const p = board[r][c];
+                const p = board[r] ? board[r][c] : null;
                 if (p) {
                     const div = document.createElement('div');
                     div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
@@ -232,6 +226,7 @@
     function renderHands() {
         [S, G].forEach(side => {
             const el = document.getElementById(side === S ? 'hand-sente' : 'hand-gote');
+            if (!el) return;
             el.innerHTML = (side === S ? "先手: " : "後手: ");
             (hands[side] || []).forEach((p, i) => {
                 const sp = document.createElement('span');
@@ -289,7 +284,7 @@
                 selected = null; possibleMoves = [];
                 update(roomRef, { board, hands, turn: nextTurn });
             } else { selected = null; possibleMoves = []; render(); }
-        } else if (board[r][c] && board[r][c].side === mySide) {
+        } else if (board[r] && board[r][c] && board[r][c].side === mySide) {
             selected = { r, c }; possibleMoves = getLegalMoves(r, c, board[r][c]); render();
         }
     }
