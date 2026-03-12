@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>オンライン将棋 - Firebase完全同期版</title>
+    <title>オンライン将棋 - プロトタイプ</title>
     <style>
         :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
@@ -15,14 +15,15 @@
         .p-gote { transform: rotate(180deg); }
         .promoted { color: #d32f2f; }
         .selected { background: rgba(255, 235, 59, 0.8) !important; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; }
+        .movable::after { content: ""; width: 12px; height: 12px; background: rgba(0, 150, 0, 0.4); border-radius: 50%; position: absolute; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
     <h2 id="status-msg">接続中...</h2>
-    <p id="room-url" style="word-break: break-all; font-size: 0.8rem;"></p>
+    <p id="room-url"></p>
 </div>
 
 <div id="hand-gote" class="hand"></div>
@@ -32,7 +33,7 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update, onDisconnect } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyASo0xVEWj_XeErm7tO1ZjbjWyfJADgydQ",
@@ -42,21 +43,33 @@
         messagingSenderId: "168100034181",
         appId: "1:168100034181:web:7d79df41db3cc56f681bec",
         measurementId: "G-X56R907T9P",
-        databaseURL: "https://shogi-d894a-default-rtdb.firebaseio.com" // URLを追加しました
+        databaseURL: "https://shogi-d894a-default-rtdb.firebaseio.com"
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
-
     const urlParams = new URLSearchParams(window.location.search);
     const roomId = urlParams.get('room') || "match-" + Math.floor(Math.random() * 1000);
     if (!urlParams.get('room')) window.history.replaceState(null, null, "?room=" + roomId);
-    
     document.getElementById('room-url').innerText = "招待URL: " + window.location.href;
 
     const roomRef = ref(db, 'rooms/' + roomId);
     const S='S', G='G';
     let board, hands, turn, mySide = null;
+    let selected = null, possibleMoves = [];
+
+    // --- 駒の動きの定義 ---
+    const MOVE_RULES = {
+        '歩': [[-1, 0]],
+        '香': 'linear-f',
+        '桂': [[-2, -1], [-2, 1]],
+        '銀': [[-1, -1], [-1, 0], [-1, 1], [1, -1], [1, 1]],
+        '金': [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, 0]],
+        '角': 'linear-diag',
+        '飛': 'linear-cross',
+        '玉': [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
+    };
+    const GOLD_MOVE = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, 0]];
 
     function getInitialBoard() {
         let b = Array(9).fill(null).map(()=>Array(9).fill(null));
@@ -64,151 +77,178 @@
         for(let i=0; i<9; i++) {
             b[0][i] = {type: pieces[i], side: G, p: false};
             b[8][i] = {type: pieces[i], side: S, p: false};
+            b[2][i] = {type: "歩", side: G, p: false};
+            b[6][i] = {type: "歩", side: S, p: false};
         }
         b[1][1]={type:"飛",side:G,p:false}; b[1][7]={type:"角",side:G,p:false};
         b[7][1]={type:"角",side:S,p:false}; b[7][7]={type:"飛",side:S,p:false};
-        for(let i=0; i<9; i++) { b[2][i]={type:"歩",side:G,p:false}; b[6][i]={type:"歩",side:S,p:false}; }
         return b;
     }
 
-    // --- 入室とデータ同期の核心ロジック ---
     onValue(roomRef, (snapshot) => {
         const data = snapshot.val();
-        
         if (!data) {
-            // 部屋がなければ作成（自分が先手）
             mySide = S;
-            set(roomRef, {
-                players: 1,
-                status: 'waiting',
-                board: getInitialBoard(),
-                hands: {S:[], G:[]},
-                turn: S
-            });
+            set(roomRef, { players: 1, status: 'waiting', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S });
             return;
         }
-
-        // 自分のサイドが未決定の場合の判定
         if (mySide === null) {
-            if (data.players === 1) {
-                mySide = G;
-                update(roomRef, { players: 2, status: 'playing' });
-            } else if (data.status === 'playing') {
-                mySide = G; // リロード等への簡易対応
-            } else {
-                mySide = S;
-            }
+            if (data.players === 1) { mySide = G; update(roomRef, { players: 2, status: 'playing' }); }
+            else { mySide = S; }
         }
-
-        // 状態の更新
         if (data.status === 'playing') {
             document.getElementById('overlay').style.display = 'none';
             board = data.board;
             hands = data.hands || {S:[], G:[]};
             turn = data.turn;
             render();
-        } else {
-            document.getElementById('status-msg').innerText = "対戦相手を待っています...";
         }
     });
 
-    onDisconnect(ref(db, `rooms/${roomId}`)).remove();
+    // --- ロジック：移動可能範囲の計算 ---
+    function getValidMoves(r, c, p) {
+        let moves = [];
+        let rule = p.p && !['角','飛'].includes(p.type) ? GOLD_MOVE : MOVE_RULES[p.type];
+        if (p.p && p.type === '角') rule = 'linear-diag-plus';
+        if (p.p && p.type === '飛') rule = 'linear-cross-plus';
 
-    let selected = null;
+        const direction = p.side === S ? 1 : -1;
+
+        if (Array.isArray(rule)) {
+            rule.forEach(([dr, dc]) => {
+                let nr = r + dr * direction, nc = c + dc * direction;
+                if (nr>=0 && nr<9 && nc>=0 && nc<9) {
+                    if (!board[nr][nc] || board[nr][nc].side !== p.side) moves.push([nr, nc]);
+                }
+            });
+        } else {
+            const vectors = {
+                'f': [[-1, 0]],
+                'diag': [[-1,-1], [-1,1], [1,-1], [1,1]],
+                'cross': [[-1,0], [1,0], [0,-1], [0,1]],
+                'diag-plus': [[-1,-1], [-1,1], [1,-1], [1,1], [1,0], [-1,0], [0,1], [0,-1]], // 簡易馬
+                'cross-plus': [[-1,0], [1,0], [0,-1], [0,1], [-1,-1], [-1,1], [1,-1], [1,1]] // 簡易龍
+            };
+            let vSet = rule.includes('diag') ? vectors['diag'] : vectors['cross'];
+            if (rule === 'linear-f') vSet = vectors['f'];
+            if (rule.includes('plus')) { /* 龍・馬の隣接1マス処理は別途追加が必要だがここでは簡略化 */ }
+
+            vSet.forEach(([dr, dc]) => {
+                let nr = r + dr * direction, nc = c + dc * direction;
+                while (nr>=0 && nr<9 && nc>=0 && nc<9) {
+                    if (!board[nr][nc]) { moves.push([nr, nc]); }
+                    else {
+                        if (board[nr][nc].side !== p.side) moves.push([nr, nc]);
+                        break;
+                    }
+                    if (rule === 'linear-f') break;
+                    nr += dr * direction; nc += dc * direction;
+                }
+            });
+        }
+        return moves;
+    }
 
     function render() {
-    const bEl = document.getElementById('board');
-    if (!bEl) return;
-    bEl.innerHTML = '';
+        const bEl = document.getElementById('board');
+        bEl.innerHTML = '';
+        document.getElementById('turn-display').innerText = `${turn === S ? "先手" : "後手"}の番 (${mySide===S?"先手":"後手"}:あなた)`;
 
-    for (let r = 0; r < 9; r++) {
-        for (let c = 0; c < 9; c++) {
-            const cell = document.createElement('div');
-            cell.className = 'cell';
-            
-            // データの存在チェックを「駒の描画」だけに限定する
-            const p = (board && board[r] && board[r][c]) ? board[r][c] : null;
-
-            if (p && typeof p === 'object' && p.type) {
-                const div = document.createElement('div');
-                div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
-                div.innerText = p.p ? getPName(p.type) : p.type;
-                cell.appendChild(div);
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                const p = board[r][c];
+                if (p) {
+                    const div = document.createElement('div');
+                    div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
+                    div.innerText = p.p ? getPName(p.type) : p.type;
+                    cell.appendChild(div);
+                }
+                if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
+                if (possibleMoves.some(m => m[0] === r && m[1] === c)) cell.classList.add('movable');
+                cell.onclick = () => handleClick(r, c);
+                bEl.appendChild(cell);
             }
-
-            // 【重要】データが有ろうが無かろうが、クリックイベントは必ず設定する
-            if (selected && selected.r === r && selected.c === c) {
-                cell.classList.add('selected');
-            }
-            
-            cell.onclick = () => handleClick(r, c); 
-            bEl.appendChild(cell);
         }
+        renderHands();
     }
-}
 
+    function renderHands() {
+        const sH = document.getElementById('hand-sente');
+        const gH = document.getElementById('hand-gote');
+        sH.innerHTML = "先手: "; gH.innerHTML = "後手: ";
+        ['S', 'G'].forEach(side => {
+            const el = side === S ? sH : gH;
+            hands[side].forEach((p, idx) => {
+                const span = document.createElement('span');
+                span.innerText = p.type;
+                span.style.cursor = 'pointer';
+                if (turn === mySide && side === mySide) {
+                    span.onclick = (e) => {
+                        e.stopPropagation();
+                        selected = { fromHand: true, type: p.type, idx: idx };
+                        possibleMoves = getDropMoves(p.type);
+                        render();
+                    };
+                }
+                el.appendChild(span);
+            });
+        });
+    }
 
-        function handleClick(r, c) {
-        // デバッグログ：タップした場所をコンソールに表示
-        console.log(`タップ: ${r}, ${c} | mySide: ${mySide} | turn: ${turn} | 選択中: ${selected ? "あり" : "なし"}`);
+    function getDropMoves(type) {
+        let moves = [];
+        for(let r=0; r<9; r++) {
+            for(let c=0; c<9; c++) {
+                if (!board[r][c]) {
+                    // 二歩・行き所のない駒チェック
+                    if (type === '歩') {
+                        if (board.some(row => row[c] && row[c].type === '歩' && row[c].side === mySide && !row[c].p)) continue;
+                        if ((mySide === S && r === 0) || (mySide === G && r === 8)) continue;
+                    }
+                    if ((type === '香' && ((mySide === S && r === 0) || (mySide === G && r === 8))) ||
+                        (type === '桂' && ((mySide === S && r <= 1) || (mySide === G && r >= 7)))) continue;
+                    moves.push([r, c]);
+                }
+            }
+        }
+        return moves;
+    }
 
-        // 自分の手番でないなら無視
+    function handleClick(r, c) {
         if (turn !== mySide) return;
 
         if (selected) {
-            // --- 2回目のタップ（移動先を決定） ---
-            
-            // 1. 移動元の駒を取得
-            const p = board[selected.r][selected.c];
-            if (!p) {
-                selected = null;
-                render();
-                return;
+            if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
+                if (selected.fromHand) {
+                    board[r][c] = { type: selected.type, side: mySide, p: false };
+                    hands[mySide].splice(selected.idx, 1);
+                } else {
+                    const p = board[selected.r][selected.c];
+                    if (board[r][c]) hands[mySide].push({ type: board[r][c].type, side: mySide, p: false });
+                    
+                    // 成る判定
+                    let canPromote = !p.p && ((mySide === S && r <= 2) || (mySide === G && r >= 6) || (mySide === S && selected.r <= 2) || (mySide === G && selected.r >= 6));
+                    if (canPromote && confirm("成りますか？")) p.p = true;
+                    // 強制成る（行き所がない場合）
+                    if (!p.p && ((p.type === '歩' || p.type === '香') && (mySide === S ? r===0 : r===8))) p.p = true;
+                    if (!p.p && (p.type === '桂' && (mySide === S ? r<=1 : r>=7))) p.p = true;
+
+                    board[r][c] = p;
+                    board[selected.r][selected.c] = null;
+                }
+                update(roomRef, { board: JSON.parse(JSON.stringify(board)), hands: hands, turn: turn === S ? G : S });
+                selected = null; possibleMoves = [];
+            } else {
+                selected = null; possibleMoves = []; render();
             }
-
-            // 2. 自分の駒を再度タップした場合は、選択し直し
-            if (board[r][c] && board[r][c].side === mySide) {
-                selected = {r, c};
-                render();
-                return;
-            }
-
-            // 3. 移動実行
-            // 相手の駒があれば持ち駒へ
-            if (board[r][c] && board[r][c].side !== mySide) {
-                if(!hands[mySide]) hands[mySide] = [];
-                hands[mySide].push({type: board[r][c].type, side: mySide, p: false});
-            }
-
-            // 盤面を更新
-            board[r][c] = p;
-            board[selected.r][selected.c] = null;
-            
-            // 4. Firebaseへ送信（ここで turn を交代）
-            // JSON.stringify を通すことで、Firebaseでの配列崩れ（オブジェクト化）を防止
-            const updateTurn = (turn === S ? G : S);
-            
-            update(roomRef, {
-                board: JSON.parse(JSON.stringify(board)),
-                hands: hands,
-                turn: updateTurn
-            }).then(() => {
-                console.log("送信成功");
-            }).catch((err) => {
-                console.error("Firebase更新エラー:", err);
-            });
-
-            selected = null;
+        } else if (board[r][c] && board[r][c].side === mySide) {
+            selected = { r, c };
+            possibleMoves = getValidMoves(r, c, board[r][c]);
             render();
-        } else {
-            // --- 1回目のタップ（駒を選択） ---
-            if (board[r] && board[r][c] && board[r][c].side === mySide) {
-                selected = {r, c};
-                render();
-            }
         }
     }
-
 
     function getPName(t) {
         const map = {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"};
