@@ -144,7 +144,11 @@
     function getPseudoLegalMoves(r, c, p, targetBoard) {
         let moves = [];
         let type = p.type;
-        if (p.p && !['飛','角'].includes(p.type)) type = '金';
+        // 成り駒（p.p === true）で、かつ飛・角・龍・馬以外の駒なら「金」として扱う
+if (p.p && !['飛','角','龍','馬'].includes(p.type)) {
+    type = '金';
+}
+
         const rule = KOMA_RULE[type];
         if (!rule) return [];
 
@@ -223,23 +227,45 @@
 
 
     function getDropMoves(type) {
-        let ms = [];
-        for (let r = 0; r < 9; r++) {
-            for (let c = 0; c < 9; c++) {
-                if (!board[r][c]) {
-                    if (type === '歩' && board.some(row => row[c] && row[c].type === '歩' && row[c].side === mySide && !row[c].p)) continue;
-                    if ((type === '歩' || type === '香') && (mySide === S ? r === 0 : r === 8)) continue;
-                    if (type === '桂' && (mySide === S ? r <= 1 : r >= 7)) continue;
-                    
-                    const nextBoard = JSON.parse(JSON.stringify(board));
-                    nextBoard[r][c] = { type, side: mySide, p: false };
-                    if (isKingInCheck(mySide, nextBoard)) continue;
-                    ms.push([r, c]);
+    let ms = [];
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            // 既に駒があるマスには打てない
+            if (!board[r][c]) {
+                
+                // --- 1. 二歩のチェック ---
+                if (type === '歩') {
+                    // 同じ列（c）に、自分の成っていない「歩」があるか確認
+                    const hasFu = board.some(row => 
+                        row[c] && row[c].type === '歩' && row[c].side === mySide && !row[c].p
+                    );
+                    if (hasFu) continue; // 同じ列に歩があれば、その列には打てない
                 }
+
+                // --- 2. 行き所のない駒打ちのチェック ---
+                // 歩・香車：一番奥（1段目）には打てない
+                if (type === '歩' || type === '香') {
+                    if (mySide === S && r === 0) continue; // 先手なら0行目
+                    if (mySide === G && r === 8) continue; // 後手なら8行目
+                }
+                // 桂馬：奥から2段以内には打てない
+                if (type === '桂') {
+                    if (mySide === S && r <= 1) continue; // 先手なら0,1行目
+                    if (mySide === G && r >= 7) continue; // 後手なら7,8行目
+                }
+                
+                // --- 3. 自殺手（打った瞬間に自玉が王手）のチェック ---
+                const nextBoard = JSON.parse(JSON.stringify(board));
+                nextBoard[r][c] = { type, side: mySide, p: false };
+                if (isKingInCheck(mySide, nextBoard)) continue;
+
+                ms.push([r, c]);
             }
         }
-        return ms;
     }
+    return ms;
+}
+
 
     // --- 描画・操作 ---
 
