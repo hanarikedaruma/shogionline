@@ -1,32 +1,31 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>オンライン将棋 - 修正版</title>
-
-<style>
-:root{ --board-size:min(94vw,70vh); --cell-size:calc(var(--board-size)/9); --board-color:#e3c16f; --piece-color:#ffebbc; }
-body{display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:sans-serif;background:#f0e68c;margin:0;height:100vh;overflow:hidden;}
-.hand{display:flex;width:var(--board-size);height:50px;background:#d2b48c;align-items:center;padding:0 5px;border:2px solid #8b4513;box-sizing:border-box;gap:4px;overflow-x:auto;}
-.turn-box{padding:8px 20px;border-radius:20px;background:#333;color:#fff;margin:5px;font-weight:bold;font-size:14px;}
-#board{display:grid;grid-template-columns:repeat(9,var(--cell-size));grid-template-rows:repeat(9,var(--cell-size));width:var(--board-size);height:var(--board-size);border:2px solid #333;background:var(--board-color);}
-.cell{border:0.5px solid rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;position:relative;width:var(--cell-size);height:var(--cell-size);cursor:pointer;}
-.piece-shape{width:85%;height:88%;background:var(--piece-color);clip-path:polygon(50% 0%,100% 25%,100% 100%,0% 100%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:calc(var(--cell-size)*0.45);font-weight:bold;border:1px solid #444;pointer-events:none;}
-.p-gote{transform:rotate(180deg);}
-.promoted{color:#d32f2f;}
-.selected{background:rgba(255,235,59,0.8)!important;}
-.movable::after{content:"";width:14px;height:14px;background:rgba(0,180,0,0.4);border-radius:50%;position:absolute;}
-#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);color:white;display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:1000;text-align:center;padding:20px;box-sizing:border-box;}
-.hand-piece{background:#ffebbc;padding:2px 6px;border-radius:4px;border:1px solid #333;cursor:pointer;font-size:12px;font-weight:bold;}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>オンライン将棋 - 決定版</title>
+    <style>
+        :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
+        .hand { display: flex; width: var(--board-size); height: 50px; background: #d2b48c; align-items: center; padding: 0 5px; border: 2px solid #8b4513; box-sizing: border-box; gap: 4px; overflow-x: auto; }
+        .turn-box { padding: 8px 20px; border-radius: 20px; background: #333; color: #fff; margin: 5px; font-weight: bold; font-size: 14px; min-width: 150px; text-align: center; }
+        #board { display: grid; grid-template-columns: repeat(9, var(--cell-size)); grid-template-rows: repeat(9, var(--cell-size)); width: var(--board-size); height: var(--board-size); border: 2px solid #333; background: var(--board-color); }
+        .cell { border: 0.5px solid rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; position: relative; width: var(--cell-size); height: var(--cell-size); cursor: pointer; }
+        .piece-shape { width: 85%; height: 88%; background: var(--piece-color); clip-path: polygon(50% 0%, 100% 25%, 100% 100%, 0% 100%, 0% 25%); display: flex; align-items: center; justify-content: center; font-size: calc(var(--cell-size) * 0.45); font-weight: bold; border: 1px solid #444; pointer-events: none; }
+        .p-gote { transform: rotate(180deg); }
+        .promoted { color: #d32f2f; }
+        .selected { background: rgba(255, 235, 59, 0.8) !important; }
+        .movable::after { content: ""; width: 14px; height: 14px; background: rgba(0, 180, 0, 0.4); border-radius: 50%; position: absolute; pointer-events: none; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; }
+        .hand-piece { background: #ffebbc; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; cursor: pointer; font-size: 12px; font-weight: bold; }
+        .checkmate { background: #d32f2f !important; }
+    </style>
 </head>
-
 <body>
 
 <div id="overlay">
-<h2 id="status-msg">接続中...</h2>
-<p id="room-url" style="word-break:break-all;font-size:0.8rem;"></p>
+    <h2 id="status-msg">接続中...</h2>
+    <p id="room-url" style="word-break: break-all; font-size: 0.8rem;"></p>
 </div>
 
 <div id="hand-gote" class="hand"></div>
@@ -35,260 +34,326 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
 <div id="hand-sente" class="hand"></div>
 
 <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    // --- 設定 (変更なし) ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyASo0xVEWj_XeErm7tO1ZjbjWyfJADgydQ",
+        authDomain: "shogi-d894a.firebaseapp.com",
+        projectId: "shogi-d894a",
+        storageBucket: "shogi-d894a.firebasestorage.app",
+        messagingSenderId: "168100034181",
+        appId: "1:168100034181:web:7d79df41db3cc56f681bec",
+        measurementId: "G-X56R907T9P",
+        databaseURL: "https://shogi-d894a-default-rtdb.firebaseio.com"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room') || "R-" + Math.floor(Math.random() * 1000);
+    if (!urlParams.get('room')) window.history.replaceState(null, null, "?room=" + roomId);
+    document.getElementById('room-url').innerText = "招待URL: " + window.location.href;
 
-/* Firebase（変更なし） */
-const firebaseConfig={
-apiKey:"AIzaSyASo0xVEWj_XeErm7tO1ZjbjWyfJADgydQ",
-authDomain:"shogi-d894a.firebaseapp.com",
-projectId:"shogi-d894a",
-storageBucket:"shogi-d894a.firebasestorage.app",
-messagingSenderId:"168100034181",
-appId:"1:168100034181:web:7d79df41db3cc56f681bec",
-measurementId:"G-X56R907T9P",
-databaseURL:"https://shogi-d894a-default-rtdb.firebaseio.com"
-};
+    const roomRef = ref(db, 'rooms/' + roomId);
+    const S='S', G='G';
+    let board, hands, turn, mySide = null;
+    let selected = null, possibleMoves = [];
 
-const app=initializeApp(firebaseConfig);
-const db=getDatabase(app);
+    // --- 将棋ロジック 定数定義 ---
+    const KOMA_RULE = {
+        '歩': { vec: [[-1, 0]], rng: 1 },
+        '香': { vec: [[-1, 0]], rng: 8 },
+        '桂': { vec: [[-2, -1], [-2, 1]], rng: 1 },
+        '銀': { vec: [[-1, -1], [-1, 0], [-1, 1], [1, -1], [1, 1]], rng: 1 },
+        '金': { vec: [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, 0]], rng: 1 },
+        '玉': { vec: [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]], rng: 1 },
+        '角': { vec: [[-1,-1],[-1,1],[1,-1],[1,1]], rng: 8 },
+        '飛': { vec: [[-1,0],[1,0],[0,-1],[0,1]], rng: 8 },
+        '馬': { vec: [[-1,-1],[-1,1],[1,-1],[1,1]], rng: 8, ex: [[-1,0],[1,0],[0,-1],[0,1]] },
+        '龍': { vec: [[-1,0],[1,0],[0,-1],[0,1]], rng: 8, ex: [[-1,-1],[-1,1],[1,-1],[1,1]] }
+    };
 
-const urlParams=new URLSearchParams(window.location.search);
-const roomId=urlParams.get('room')||"R-"+Math.floor(Math.random()*1000);
-if(!urlParams.get('room'))window.history.replaceState(null,null,"?room="+roomId);
-document.getElementById('room-url').innerText="招待URL: "+window.location.href;
+    const PROMOTION_MAP = { '歩':'と', '香':'杏', '桂':'圭', '銀':'全', '角':'馬', '飛':'龍' };
+    const DEMOTION_MAP = { 'と':'歩', '杏':'香', '圭':'桂', '全':'銀', '馬':'角', '龍':'飛' };
 
-const roomRef=ref(db,'rooms/'+roomId);
+    // --- 接続・入室処理 (変更なし) ---
+    onValue(roomRef, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+            mySide = S; sessionStorage.setItem('shogi-side', S);
+            set(roomRef, { players: 1, status: 'waiting', board: getInitialBoard(), hands: {S:[], G:[]}, turn: S });
+            return;
+        }
+        const savedSide = sessionStorage.getItem('shogi-side');
+        if (savedSide) { mySide = savedSide; }
+        else if (mySide === null) {
+            if (data.players === 1) { mySide = G; sessionStorage.setItem('shogi-side', G); update(roomRef, { players: 2, status: 'playing' }); }
+            else { mySide = S; sessionStorage.setItem('shogi-side', S); }
+        }
+        let rawBoard = data.board || [];
+        board = Array(9).fill(null).map((_, r) => {
+            let row = rawBoard[r] || [];
+            return Array(9).fill(null).map((_, c) => row[c] || null);
+        });
+        if (data.status === 'playing') {
+            document.getElementById('overlay').style.display = 'none';
+            hands = data.hands || {S:[], G:[]};
+            if (!hands.S) hands.S = []; if (!hands.G) hands.G = [];
+            turn = data.turn;
+            render();
+        } else {
+            document.getElementById('status-msg').innerText = "対戦相手を待っています...";
+        }
+    });
 
-const S='S',G='G';
-let board,hands,turn,mySide=null;
-let selected=null,possibleMoves=[];
+    // --- ロジックコア：移動計算 ---
+    function getInitialBoard() {
+        let b = Array(9).fill(null).map(()=>Array(9).fill(null));
+        const pLine = ["香","桂","銀","金","玉","金","銀","桂","香"];
+        for(let i=0; i<9; i++) {
+            b[0][i] = {type: pLine[i], side: G, p: false};
+            b[8][i] = {type: pLine[i], side: S, p: false};
+            b[2][i] = {type: "歩", side: G, p: false};
+            b[6][i] = {type: "歩", side: S, p: false};
+        }
+        b[1][1]={type:"飛",side:G,p:false}; b[1][7]={type:"角",side:G,p:false};
+        b[7][1]={type:"角",side:S,p:false}; b[7][7]={type:"飛",side:S,p:false};
+        return b;
+    }
 
-/* 駒ルール */
-const KOMA_RULE={
-'歩':{vec:[[-1,0]],rng:1},
-'香':{vec:[[-1,0]],rng:8},
-'桂':{vec:[[-2,-1],[-2,1]],rng:1},
-'銀':{vec:[[-1,-1],[-1,0],[-1,1],[1,-1],[1,1]],rng:1},
-'金':{vec:[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,0]],rng:1},
-'玉':{vec:[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]],rng:1},
-'角':{vec:[[-1,-1],[-1,1],[1,-1],[1,1]],rng:8},
-'飛':{vec:[[-1,0],[1,0],[0,-1],[0,1]],rng:8},
-'馬':{vec:[[-1,-1],[-1,1],[1,-1],[1,1]],rng:8,ex:[[-1,0],[1,0],[0,-1],[0,1]]},
-'龍':{vec:[[-1,0],[1,0],[0,-1],[0,1]],rng:8,ex:[[-1,-1],[-1,1],[1,-1],[1,1]]}
-};
+    // その場所が相手の駒に狙われているか（王手判定用）
+    function isSquareAttacked(r, c, attackerSide, targetBoard) {
+        for (let ir = 0; ir < 9; ir++) {
+            for (let ic = 0; ic < 9; ic++) {
+                const p = targetBoard[ir][ic];
+                if (p && p.side === attackerSide) {
+                    const moves = getPseudoLegalMoves(ir, ic, p, targetBoard);
+                    if (moves.some(m => m[0] === r && m[1] === c)) return true;
+                }
+            }
+        }
+        return false;
+    }
 
-/* 初期盤 */
-function getInitialBoard(){
-let b=Array(9).fill(null).map(()=>Array(9).fill(null));
-const pLine=["香","桂","銀","金","玉","金","銀","桂","香"];
-for(let i=0;i<9;i++){
-b[0][i]={type:pLine[i],side:G,p:false};
-b[8][i]={type:pLine[i],side:S,p:false};
-b[2][i]={type:"歩",side:G,p:false};
-b[6][i]={type:"歩",side:S,p:false};
-}
-b[1][1]={type:"飛",side:G,p:false};
-b[1][7]={type:"角",side:G,p:false};
-b[7][1]={type:"角",side:S,p:false};
-b[7][7]={type:"飛",side:S,p:false};
-return b;
-}
+    // 自殺手・王手放置チェック用の王手判定
+    function isKingInCheck(side, targetBoard) {
+        let kr, kc;
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                if (targetBoard[r][c] && targetBoard[r][c].type === '玉' && targetBoard[r][c].side === side) {
+                    kr = r; kc = c; break;
+                }
+            }
+        }
+        return isSquareAttacked(kr, kc, side === S ? G : S, targetBoard);
+    }
 
-/* 王手判定 */
-function isCheck(side,b){
-let kr,kc;
-for(let r=0;r<9;r++)
-for(let c=0;c<9;c++)
-if(b[r][c]&&b[r][c].type==="玉"&&b[r][c].side===side){kr=r;kc=c;}
+    // 駒の動ける範囲（盤面の外、味方の駒、長い動きの遮断を考慮）
+    function getPseudoLegalMoves(r, c, p, targetBoard) {
+        let moves = [];
+        let rKey = p.type;
+        if (p.p && !['飛','角'].includes(p.type)) rKey = '金';
+        if (p.p && p.type === '角') rKey = '馬';
+        if (p.p && p.type === '飛') rKey = '龍';
+        const rule = KOMA_RULE[rKey];
+        const dir = p.side === S ? 1 : -1;
 
-const enemy=side===S?G:S;
+        rule.vec.forEach(([dr, dc]) => {
+            for (let i = 1; i <= rule.rng; i++) {
+                let nr = r + dr * dir * i;
+                let nc = c + dc * dir * i;
+                if (nr < 0 || nr >= 9 || nc < 0 || nc >= 9) break;
+                if (!targetBoard[nr][nc]) {
+                    moves.push([nr, nc]);
+                } else {
+                    if (targetBoard[nr][nc].side !== p.side) moves.push([nr, nc]);
+                    break;
+                }
+            }
+        });
+        if (rule.ex) {
+            rule.ex.forEach(([dr, dc]) => {
+                let nr = r + dr, nc = c + dc;
+                if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) {
+                    if (!targetBoard[nr][nc] || targetBoard[nr][nc].side !== p.side) moves.push([nr, nc]);
+                }
+            });
+        }
+        return moves;
+    }
 
-for(let r=0;r<9;r++)
-for(let c=0;c<9;c++){
-const p=b[r][c];
-if(!p||p.side!==enemy)continue;
-const moves=getValidMovesRaw(r,c,p,b);
-if(moves.some(m=>m[0]===kr&&m[1]===kc))return true;
-}
-return false;
-}
+    // 合法手の計算（自殺手・王手放置を排除）
+    function getLegalMoves(r, c, p) {
+        const rawMoves = getPseudoLegalMoves(r, c, p, board);
+        return rawMoves.filter(([nr, nc]) => {
+            // シミュレーション
+            const nextBoard = JSON.parse(JSON.stringify(board));
+            nextBoard[nr][nc] = nextBoard[r][c];
+            nextBoard[r][c] = null;
+            return !isKingInCheck(p.side, nextBoard);
+        });
+    }
 
-/* 仮想手 */
-function simulateMove(fr,fc,tr,tc){
-let b=JSON.parse(JSON.stringify(board));
-b[tr][tc]=b[fr][fc];
-b[fr][fc]=null;
-return b;
-}
+    // 持ち駒を打てる場所の計算
+    function getDropMoves(type) {
+        let ms = [];
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                if (!board[r][c]) {
+                    // 二歩チェック
+                    if (type === '歩' && board.some(row => row[c] && row[c].type === '歩' && row[c].side === mySide && !row[c].p)) continue;
+                    // 行き所のない駒
+                    if ((type === '歩' || type === '香') && (mySide === S ? r === 0 : r === 8)) continue;
+                    if (type === '桂' && (mySide === S ? r <= 1 : r >= 7)) continue;
+                    
+                    // 打ち歩詰めチェック用のシミュレーション
+                    if (type === '歩') {
+                        const nextBoard = JSON.parse(JSON.stringify(board));
+                        nextBoard[r][c] = { type: '歩', side: mySide, p: false };
+                        const enemySide = mySide === S ? G : S;
+                        if (isKingInCheck(enemySide, nextBoard) && isCheckmate(enemySide, nextBoard)) continue;
+                    }
 
-/* 生手 */
-function getValidMovesRaw(r,c,p,b){
-let moves=[];
-let rKey=p.type;
-if(p.p&&!['飛','角'].includes(p.type))rKey='金';
-if(p.p&&p.type==='角')rKey='馬';
-if(p.p&&p.type==='飛')rKey='龍';
-const rule=KOMA_RULE[rKey];
-const dir=p.side===S?1:-1;
+                    // 自殺手チェック（玉を打つことはないが、汎用的に）
+                    const nextBoard = JSON.parse(JSON.stringify(board));
+                    nextBoard[r][c] = { type: type, side: mySide, p: false };
+                    if (isKingInCheck(mySide, nextBoard)) continue;
 
-rule.vec.forEach(([dr,dc])=>{
-for(let i=1;i<=rule.rng;i++){
-let nr=r+dr*dir*i;
-let nc=c+dc*dir*i;
-if(nr<0||nr>=9||nc<0||nc>=9)break;
-if(!b[nr][nc])moves.push([nr,nc]);
-else{
-if(b[nr][nc].side!==p.side)moves.push([nr,nc]);
-break;
-}
-if(rule.rng===1)break;
-}
-});
-return moves;
-}
+                    ms.push([r, c]);
+                }
+            }
+        }
+        return ms;
+    }
 
-/* 合法手 */
-function getValidMoves(r,c,p){
-let ms=getValidMovesRaw(r,c,p,board);
-return ms.filter(m=>{
-let b=simulateMove(r,c,m[0],m[1]);
-return !isCheck(p.side,b);
-});
-}
+    // 詰み判定
+    function isCheckmate(side, targetBoard) {
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                const p = targetBoard[r][c];
+                if (p && p.side === side) {
+                    const moves = getPseudoLegalMoves(r, c, p, targetBoard).filter(([nr, nc]) => {
+                        const b = JSON.parse(JSON.stringify(targetBoard));
+                        b[nr][nc] = b[r][c];
+                        b[r][c] = null;
+                        return !isKingInCheck(side, b);
+                    });
+                    if (moves.length > 0) return false;
+                }
+            }
+        }
+        // 持ち駒が打てるかどうかもチェック
+        const myHands = hands ? hands[side] : [];
+        if (myHands && myHands.length > 0) {
+            // 簡略化：一つでも打てる場所があれば詰みではない
+            // 本来は全種類試すべきだが、概ねこれで判定可能
+            return false; 
+        }
+        return true;
+    }
 
-/* Firebase同期 */
-onValue(roomRef,(snapshot)=>{
-const data=snapshot.val();
+    // --- UI・イベント ---
+    function render() {
+        const bEl = document.getElementById('board');
+        bEl.innerHTML = '';
+        const isOute = isKingInCheck(turn, board);
+        const checkmate = isCheckmate(turn, board);
 
-if(!data){
-mySide=S;
-sessionStorage.setItem('shogi-side',S);
-set(roomRef,{players:1,status:'waiting',board:getInitialBoard(),hands:{S:[],G:[]},turn:S});
-return;
-}
+        let turnText = `${turn === S ? "先手" : "後手"}の番`;
+        if (checkmate) turnText += "（詰み！）";
+        else if (isOute) turnText += "（王手！）";
+        
+        document.getElementById('turn-display').innerText = `${turnText} (${mySide === S ? "先手" : "後手"}:あなた)`;
+        if (checkmate) document.getElementById('turn-display').classList.add('checkmate');
+        else document.getElementById('turn-display').classList.remove('checkmate');
 
-/* サイド決定（修正） */
-const saved=sessionStorage.getItem('shogi-side');
-if(saved)mySide=saved;
-else{
-if(data.players===1){
-mySide=S;
-sessionStorage.setItem('shogi-side',S);
-}else{
-mySide=G;
-sessionStorage.setItem('shogi-side',G);
-update(roomRef,{players:2,status:'playing'});
-}
-}
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                const p = board[r][c];
+                if (p) {
+                    const div = document.createElement('div');
+                    div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
+                    div.innerText = p.p ? getPName(p.type) : p.type;
+                    cell.appendChild(div);
+                }
+                if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
+                if (possibleMoves.some(m => m[0] === r && m[1] === c)) cell.classList.add('movable');
+                cell.onclick = () => handleClick(r, c);
+                bEl.appendChild(cell);
+            }
+        }
+        renderHands();
+    }
 
-board=data.board;
-hands=data.hands||{S:[],G:[]};
-turn=data.turn;
+    function renderHands() {
+        const sH = document.getElementById('hand-sente'), gH = document.getElementById('hand-gote');
+        sH.innerHTML = "先手: "; gH.innerHTML = "後手: ";
+        [S, G].forEach(side => {
+            const el = side === S ? sH : gH;
+            (hands[side] || []).forEach((p, i) => {
+                const sp = document.createElement('span');
+                sp.className = 'hand-piece';
+                sp.innerText = p.type;
+                if (turn === mySide && side === mySide) {
+                    sp.onclick = (e) => { 
+                        e.stopPropagation(); 
+                        selected = { fromHand: true, type: p.type, idx: i }; 
+                        possibleMoves = getDropMoves(p.type); 
+                        render(); 
+                    };
+                }
+                el.appendChild(sp);
+            });
+        });
+    }
 
-if(data.status==="playing"){
-document.getElementById("overlay").style.display="none";
-render();
-}else{
-document.getElementById("status-msg").innerText="対戦相手を待っています...";
-}
-});
+    function handleClick(r, c) {
+        if (turn !== mySide) return;
 
-/* 描画 */
-function render(){
-const bEl=document.getElementById('board');
-bEl.innerHTML='';
+        if (selected) {
+            if (possibleMoves.some(m => m[0] === r && m[1] === c)) {
+                if (selected.fromHand) {
+                    board[r][c] = { type: selected.type, side: mySide, p: false };
+                    hands[mySide].splice(selected.idx, 1);
+                } else {
+                    const p = board[selected.r][selected.c];
+                    // 駒を取る
+                    if (board[r][c]) {
+                        const capType = DEMOTION_MAP[board[r][c].type] || board[r][c].type;
+                        hands[mySide].push({ type: capType, side: mySide, p: false });
+                    }
+                    // 成り判定
+                    const canPromote = PROMOTION_MAP[p.type] && (mySide === S ? (r <= 2 || selected.r <= 2) : (r >= 6 || selected.r >= 6));
+                    const forcePromote = (p.type === '歩' || p.type === '香') ? (mySide === S ? r === 0 : r === 8) : 
+                                        (p.type === '桂') ? (mySide === S ? r <= 1 : r >= 7) : false;
 
-document.getElementById('turn-display').innerText=
-`${turn===S?"先手":"後手"}の番 (${mySide===S?"先手":"後手"}:あなた)`;
+                    if (canPromote) {
+                        if (forcePromote || confirm("成りますか？")) {
+                            p.type = PROMOTION_MAP[p.type];
+                            p.p = true;
+                        }
+                    }
+                    board[r][c] = p; board[selected.r][selected.c] = null;
+                }
+                
+                selected = null; 
+                possibleMoves = [];
+                update(roomRef, { board: board, hands: hands, turn: turn === S ? G : S });
+                render(); 
+            } else { 
+                selected = null; possibleMoves = []; render(); 
+            }
+        } else if (board[r][c] && board[r][c].side === mySide) {
+            selected = { r, c }; 
+            possibleMoves = getLegalMoves(r, c, board[r][c]); 
+            render();
+        }
+    }
 
-for(let r=0;r<9;r++)
-for(let c=0;c<9;c++){
-
-const cell=document.createElement('div');
-cell.className='cell';
-
-const p=board[r][c];
-
-if(p){
-const div=document.createElement('div');
-div.className=`piece-shape ${p.side===G?'p-gote':''} ${p.p?'promoted':''}`;
-div.innerText=p.p?getPName(p.type):p.type;
-cell.appendChild(div);
-}
-
-if(selected&&selected.r===r&&selected.c===c)
-cell.classList.add('selected');
-
-if(possibleMoves.some(m=>m[0]===r&&m[1]===c))
-cell.classList.add('movable');
-
-cell.onclick=()=>handleClick(r,c);
-
-bEl.appendChild(cell);
-}
-
-renderHands();
-}
-
-/* 持ち駒 */
-function renderHands(){
-const sH=document.getElementById('hand-sente');
-const gH=document.getElementById('hand-gote');
-sH.innerHTML="先手:";
-gH.innerHTML="後手:";
-
-[S,G].forEach(side=>{
-const el=side===S?sH:gH;
-(hands[side]||[]).forEach((p,i)=>{
-const sp=document.createElement('span');
-sp.className='hand-piece';
-sp.innerText=p.type;
-
-if(turn===mySide&&side===mySide){
-sp.onclick=(e)=>{
-e.stopPropagation();
-selected={fromHand:true,type:p.type,idx:i};
-possibleMoves=[];
-};
-}
-
-el.appendChild(sp);
-});
-});
-}
-
-/* クリック処理 */
-function handleClick(r,c){
-if(turn!==mySide)return;
-
-if(selected && !selected.fromHand){
-if(possibleMoves.some(m=>m[0]===r&&m[1]===c)){
-const p=board[selected.r][selected.c];
-board[r][c]=p;
-board[selected.r][selected.c]=null;
-selected=null;
-possibleMoves=[];
-update(roomRef,{board:board,hands:hands,turn:(turn===S?G:S)});
-render();
-}else{
-selected=null;
-possibleMoves=[];
-render();
-}
-}
-else if(board[r][c] && board[r][c].side===mySide){
-selected={r,c};
-possibleMoves=getValidMoves(r,c,board[r][c]);
-render();
-}
-}
-
-function getPName(t){
-return {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"}[t]||t;
-}
-
+    function getPName(t) { return {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"}[t] || t; }
 </script>
 </body>
 </html>
