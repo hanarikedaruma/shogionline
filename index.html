@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>オンライン将棋 - 2人揃ったら開始</title>
+    <style>
+        :root{ --board-size: min(94vw, 70vh); --cell-size: calc(var(--board-size) / 9); --board-color: #e3c16f; --piece-color: #ffebbc; }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; background: #f0e68c; margin: 0; height: 100vh; overflow: hidden; }
+        .hand { display: flex; width: var(--board-size); height: 50px; background: #d2b48c; align-items: center; padding: 0 5px; border: 2px solid #8b4513; box-sizing: border-box; gap: 4px; }
+        .turn-box { padding: 8px 20px; border-radius: 20px; background: #333; color: #fff; margin: 5px; font-weight: bold; }
+        #board { display: grid; grid-template-columns: repeat(9, var(--cell-size)); grid-template-rows: repeat(9, var(--cell-size)); width: var(--board-size); height: var(--board-size); border: 2px solid #333; background: var(--board-color); }
+        .cell { border: 0.5px solid rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; position: relative; }
+        .piece-shape { width: 85%; height: 88%; background: var(--piece-color); clip-path: polygon(50% 0%, 100% 25%, 100% 100%, 0% 100%, 0% 25%); display: flex; align-items: center; justify-content: center; font-size: calc(var(--cell-size) * 0.5); font-weight: bold; border: 1px solid #444; }
+        .p-gote { transform: rotate(180deg); }
+        .promoted { color: #d32f2f; }
+        .selected { background: rgba(255, 235, 59, 0.8) !important; }
+        .movable::after { content: ""; width: 12px; height: 12px; background: rgba(0, 150, 0, 0.4); border-radius: 50%; position: absolute; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; }
+        .btn { padding: 10px 20px; font-size: 1.2rem; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="overlay">
+    <h2 id="status-msg">接続中...</h2>
+    <p id="room-url"></p>
+</div>
+
+<div id="hand-gote" class="hand"></div>
+<div id="turn-display" class="turn-box">対局準備中</div>
+<div id="board"></div>
+<div id="hand-sente" class="hand"></div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, set, onValue, update, onDisconnect } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+    // --- Firebase設定 (自身のものに書き換えてください) ---
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyASo0xVEWj_XeErm7tO1ZjbjWyfJADgydQ",
+  authDomain: "shogi-d894a.firebaseapp.com",
+  projectId: "shogi-d894a",
+  storageBucket: "shogi-d894a.firebasestorage.app",
+  messagingSenderId: "168100034181",
+  appId: "1:168100034181:web:7d79df41db3cc56f681bec",
+  measurementId: "G-X56R907T9P"
+};
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room') || "match-" + Math.floor(Math.random() * 1000);
+    if (!urlParams.get('room')) window.history.replaceState(null, null, "?room=" + roomId);
+    
+    document.getElementById('room-url').innerText = "招待URL: " + window.location.href;
+
+    const roomRef = ref(db, 'rooms/' + roomId);
+    const S='S', G='G';
+    let board, hands, turn, mySide = null, isReady = false;
+
+    // --- 初期配置データ ---
+    function getInitialBoard() {
+        let b = Array(9).fill(null).map(()=>Array(9).fill(null));
+        const pieces = ["香","桂","銀","金","玉","金","銀","桂","香"];
+        for(let i=0; i<9; i++) {
+            b[0][i] = {type: pieces[i], side: G, p: false};
+            b[8][i] = {type: pieces[i], side: S, p: false};
+        }
+        b[1][1]={type:"飛",side:G,p:false}; b[1][7]={type:"角",side:G,p:false};
+        b[7][1]={type:"角",side:S,p:false}; b[7][7]={type:"飛",side:S,p:false};
+        for(let i=0; i<9; i++) { b[2][i]={type:"歩",side:G,p:false}; b[6][i]={type:"歩",side:S,p:false}; }
+        return b;
+    }
+
+    // --- プレイヤー入室処理 ---
+    onValue(roomRef, (snapshot) => {
+        const data = snapshot.val();
+        
+        if (!isReady) {
+            let pCount = data ? (data.players || 0) : 0;
+            if (pCount === 0) {
+                mySide = S;
+                update(roomRef, { players: 1, status: 'waiting' });
+            } else if (pCount === 1 && mySide === null) {
+                mySide = G;
+                const startData = {
+                    players: 2,
+                    status: 'playing',
+                    board: getInitialBoard(),
+                    hands: {S:[], G:[]},
+                    turn: S
+                };
+                set(roomRef, startData);
+            }
+            isReady = true;
+        }
+
+        if (data && data.status === 'playing') {
+            document.getElementById('overlay').style.display = 'none';
+            board = data.board;
+            hands = data.hands;
+            turn = data.turn;
+            render();
+        } else {
+            document.getElementById('status-msg').innerText = "対戦相手を待っています...";
+        }
+    }, { onlyOnce: false });
+
+    // 切断時にプレイヤー数を減らす設定
+    onDisconnect(ref(db, `rooms/${roomId}/players`)).set(0);
+
+    // --- 将棋ロジック (基本部分は以前のものと同じですが mySide チェックを追加) ---
+    let selected = null, possibleMoves = [];
+
+    function render() {
+        const bEl = document.getElementById('board'); bEl.innerHTML = '';
+        document.getElementById('turn-display').innerText = (turn === S ? "先手" : "後手") + "の番です" + (turn === mySide ? " (あなた)" : "");
+        
+        for(let r=0; r<9; r++) {
+            for(let c=0; c<9; c++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                const p = board[r][c];
+                if (p) {
+                    const div = document.createElement('div');
+                    div.className = `piece-shape ${p.side === G ? 'p-gote' : ''} ${p.p ? 'promoted' : ''}`;
+                    div.innerText = p.p ? getPName(p.type) : p.type;
+                    cell.appendChild(div);
+                }
+                if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
+                cell.onclick = () => handleClick(r, c);
+                bEl.appendChild(cell);
+            }
+        }
+        // 持ち駒描画 (簡略化)
+        document.getElementById('hand-sente').innerText = "先手持ち駒: " + hands[S].map(x=>x.type).join("");
+        document.getElementById('hand-gote').innerText = "後手持ち駒: " + hands[G].map(x=>x.type).join("");
+    }
+
+    function handleClick(r, c) {
+        if (turn !== mySide) return; // 自分のターンでなければ何もしない
+
+        if (selected) {
+            // 移動処理 (簡易実装)
+            const p = board[selected.r][selected.c];
+            if (board[r][c]) hands[mySide].push({type: board[r][c].type});
+            board[r][c] = p;
+            board[selected.r][selected.c] = null;
+            
+            // Firebaseを更新
+            update(roomRef, {
+                board: board,
+                hands: hands,
+                turn: turn === S ? G : S
+            });
+            selected = null;
+        } else {
+            if (board[r][c] && board[r][c].side === mySide) {
+                selected = {r, c};
+                render();
+            }
+        }
+    }
+
+    function getPName(t) {
+        const map = {"歩":"と","香":"杏","桂":"圭","銀":"全","角":"馬","飛":"龍"};
+        return map[t] || t;
+    }
+</script>
+</body>
+</html>
